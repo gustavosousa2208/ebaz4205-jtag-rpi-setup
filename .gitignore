@@ -1,0 +1,17 @@
+# Firmware build products
+/build/
+*.o
+*.elf
+*.map
+
+# Runtime state and diagnostic captures
+/jtag/logs/
+/jtag/run/
+
+# Locally packaged archives
+/dist/
+
+# Editor and OS files
+*~
+*.swp
+.DS_Store

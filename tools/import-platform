@@ -1,0 +1,95 @@
+#!/bin/bash
+set -euo pipefail
+
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+source_xsa=${1:-}
+
+if [ -z "$source_xsa" ]; then
+    echo "Usage: $0 /path/to/exported-platform.xsa" >&2
+    exit 2
+fi
+if [ ! -r "$source_xsa" ]; then
+    echo "XSA not found or unreadable: $source_xsa" >&2
+    exit 2
+fi
+if ! command -v unzip >/dev/null 2>&1; then
+    echo "unzip is required to import an XSA." >&2
+    exit 2
+fi
+
+source_xsa=$(readlink -f -- "$source_xsa")
+hardware_dir="$project_dir/hardware"
+jtag_xsa_dir="$project_dir/jtag/xsa"
+run_dir="$project_dir/jtag/run"
+destination_xsa="$hardware_dir/ebaz_test.xsa"
+destination_bit="$hardware_dir/ebaz_test.bit"
+destination_ps7="$jtag_xsa_dir/ps7_init.tcl"
+full_init_marker="$run_dir/full-init-required"
+
+mapfile -t bit_entries < <(unzip -Z1 "$source_xsa" | awk 'tolower($0) ~ /[.]bit$/')
+mapfile -t ps7_entries < <(unzip -Z1 "$source_xsa" | awk -F/ 'tolower($NF) == "ps7_init.tcl"')
+
+if [ "${#bit_entries[@]}" -ne 1 ]; then
+    echo "Expected exactly one .bit file in the XSA; found ${#bit_entries[@]}." >&2
+    printf '  %s\n' "${bit_entries[@]}" >&2
+    exit 2
+fi
+if [ "${#ps7_entries[@]}" -ne 1 ]; then
+    echo "Expected exactly one ps7_init.tcl in the XSA; found ${#ps7_entries[@]}." >&2
+    printf '  %s\n' "${ps7_entries[@]}" >&2
+    exit 2
+fi
+
+mkdir -p "$hardware_dir" "$jtag_xsa_dir" "$run_dir"
+stage_dir=$(mktemp -d "$hardware_dir/.platform-import.XXXXXX")
+trap 'rm -rf -- "$stage_dir"' EXIT
+
+unzip -p "$source_xsa" "${bit_entries[0]}" >"$stage_dir/ebaz_test.bit"
+unzip -p "$source_xsa" "${ps7_entries[0]}" >"$stage_dir/ps7_init.tcl"
+cp -- "$source_xsa" "$stage_dir/ebaz_test.xsa"
+
+if [ ! -s "$stage_dir/ebaz_test.bit" ]; then
+    echo "The embedded bitstream is empty; nothing was changed." >&2
+    exit 2
+fi
+if ! grep -q 'proc ps7_init' "$stage_dir/ps7_init.tcl"; then
+    echo "The embedded ps7_init.tcl does not define ps7_init; nothing was changed." >&2
+    exit 2
+fi
+
+xsa_changed=yes
+bit_changed=yes
+ps7_changed=yes
+[ -f "$destination_xsa" ] && cmp -s "$stage_dir/ebaz_test.xsa" "$destination_xsa" && xsa_changed=no
+[ -f "$destination_bit" ] && cmp -s "$stage_dir/ebaz_test.bit" "$destination_bit" && bit_changed=no
+[ -f "$destination_ps7" ] && cmp -s "$stage_dir/ps7_init.tcl" "$destination_ps7" && ps7_changed=no
+
+mv -f -- "$stage_dir/ebaz_test.xsa" "$destination_xsa"
+mv -f -- "$stage_dir/ebaz_test.bit" "$destination_bit"
+mv -f -- "$stage_dir/ps7_init.tcl" "$destination_ps7"
+
+if [ "$ps7_changed" = yes ]; then
+    {
+        echo "A platform import changed jtag/xsa/ps7_init.tcl."
+        echo "source=$source_xsa"
+        echo "time=$(date --iso-8601=seconds)"
+        sha256sum "$destination_ps7"
+    } >"$full_init_marker"
+fi
+
+echo "Platform imported from: $source_xsa"
+echo "  hardware/ebaz_test.xsa: $xsa_changed"
+echo "  hardware/ebaz_test.bit: $bit_changed"
+echo "  jtag/xsa/ps7_init.tcl:  $ps7_changed"
+
+if [ -e "$full_init_marker" ]; then
+    echo
+    echo "PS initialization changed or has not yet been applied."
+    echo "Power-cycle the EBAZ4205, then run: make upload-full"
+elif [ "$bit_changed" = yes ]; then
+    echo
+    echo "PL-only update detected. Run: make upload"
+else
+    echo
+    echo "No hardware upload is required."
+fi

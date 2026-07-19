@@ -1,0 +1,49 @@
+#!/bin/bash
+set -euo pipefail
+
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+project_dir=$(CDPATH= cd -- "$bundle_dir/.." && pwd)
+bitstream=${1:-$project_dir/hardware/ebaz_test.bit}
+
+pid_file="$bundle_dir/run/openocd.pid"
+if [ -r "$pid_file" ]; then
+    old_pid=$(cat "$pid_file")
+    if [[ "$old_pid" =~ ^[0-9]+$ ]] && sudo kill -0 "$old_pid" 2>/dev/null; then
+        echo "Stopping previous bundled OpenOCD process $old_pid..."
+        sudo kill "$old_pid"
+    fi
+fi
+
+if [ ! -r "$bitstream" ]; then
+    echo "Bitstream not found or unreadable: $bitstream" >&2
+    echo "Usage: $0 [design.bit]" >&2
+    exit 2
+fi
+
+EBAZ_BITSTREAM=$(readlink -f -- "$bitstream")
+export EBAZ_BITSTREAM
+
+log_dir="$bundle_dir/logs"
+mkdir -p "$log_dir"
+timestamp=$(date '+%Y%m%d-%H%M%S')
+log_file="$log_dir/${timestamp}-bitstream.log"
+
+{
+    echo "time=$(date --iso-8601=seconds)"
+    echo "script=upload-bitstream"
+    echo "bitstream=$EBAZ_BITSTREAM"
+    sha256sum "$EBAZ_BITSTREAM"
+    uname -a
+} | tee "$log_file"
+
+set +e
+sudo --preserve-env=EBAZ_BITSTREAM "$bundle_dir/bin/openocd" \
+    -s "$bundle_dir/openocd-scripts" \
+    -f "$bundle_dir/ebaz4205.cfg" \
+    -f "$bundle_dir/upload-bitstream.cfg" 2>&1 | tee -a "$log_file"
+status=${PIPESTATUS[0]}
+set -e
+
+echo "exit_status=$status" | tee -a "$log_file"
+echo "Log saved to: $log_file"
+exit "$status"

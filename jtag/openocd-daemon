@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "$$" >"$EBAZ_PIDFILE"
+upload_cfg=${EBAZ_UPLOAD_CFG:-$EBAZ_BUNDLE_DIR/upload-code.cfg}
+exec "$EBAZ_BUNDLE_DIR/bin/openocd" \
+    -s "$EBAZ_BUNDLE_DIR/openocd-scripts" \
+    -f "$EBAZ_BUNDLE_DIR/ebaz4205.cfg" \
+    -f "$upload_cfg"

@@ -1,0 +1,36 @@
+#!/bin/bash
+set -euo pipefail
+
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+device=${1:-/dev/ttyUSB0}
+log_dir="$bundle_dir/logs"
+mkdir -p "$log_dir"
+timestamp=$(date '+%Y%m%d-%H%M%S')
+log_file="$log_dir/${timestamp}-ftdi-loopback.log"
+test_text="EBAZ_FTDI_LOOPBACK_${timestamp}"
+
+if [ ! -e "$device" ]; then
+    echo "Serial device does not exist: $device" >&2
+    exit 2
+fi
+
+echo "Disconnect the FTDI from the EBAZ4205 and short FTDI TX directly to FTDI RX."
+echo "Testing $device at 115200 baud..."
+stty -F "$device" 115200 cs8 -cstopb -parenb -ixon -ixoff -crtscts raw
+
+timeout 4s stdbuf -o0 cat "$device" >"$log_file" 2>&1 &
+reader_pid=$!
+sleep 0.3
+printf '%s\r\n' "$test_text" >"$device"
+wait "$reader_pid" 2>/dev/null || true
+
+if grep -q "$test_text" "$log_file"; then
+    echo "PASS: FTDI transmitted and received the loopback text."
+    echo "Log saved to: $log_file"
+    exit 0
+fi
+
+echo "FAIL: no matching loopback text was received."
+echo "Log saved to: $log_file"
+exit 1
+

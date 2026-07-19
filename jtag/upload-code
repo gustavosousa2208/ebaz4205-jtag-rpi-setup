@@ -1,0 +1,181 @@
+#!/bin/bash
+set -euo pipefail
+
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+project_dir=$(CDPATH= cd -- "$bundle_dir/.." && pwd)
+force_full=false
+if [ "${1:-}" = "--full" ]; then
+    force_full=true
+    shift
+fi
+elf=${1:-$project_dir/build/hello.elf}
+bitstream=${2:-$project_dir/hardware/ebaz_test.bit}
+
+if [ ! -r "$elf" ]; then
+    echo "ELF not found or unreadable: $elf" >&2
+    echo "Usage: $0 [--full] [application.elf] [design.bit]" >&2
+    exit 2
+fi
+if [ ! -r "$bitstream" ]; then
+    echo "Bitstream not found or unreadable: $bitstream" >&2
+    echo "Usage: $0 [--full] [application.elf] [design.bit]" >&2
+    exit 2
+fi
+if ! command -v arm-none-eabi-readelf >/dev/null 2>&1; then
+    echo "arm-none-eabi-readelf is required to determine the ELF entry point." >&2
+    exit 2
+fi
+
+EBAZ_BUNDLE_DIR=$bundle_dir
+EBAZ_ELF=$(readlink -f -- "$elf")
+EBAZ_BITSTREAM=$(readlink -f -- "$bitstream")
+EBAZ_ENTRY=$(arm-none-eabi-readelf -h "$EBAZ_ELF" | awk '/Entry point address:/ {print $4; exit}')
+if [ -z "$EBAZ_ENTRY" ]; then
+    echo "Could not determine the entry point from: $EBAZ_ELF" >&2
+    exit 2
+fi
+
+run_dir="$bundle_dir/run"
+log_dir="$bundle_dir/logs"
+mkdir -p "$run_dir" "$log_dir"
+pid_file="$run_dir/openocd.pid"
+bitstream_hash_file="$run_dir/bitstream.sha256"
+full_init_marker="$run_dir/full-init-required"
+requested_bitstream_hash=$(sha256sum "$EBAZ_BITSTREAM" | awk '{print $1}')
+
+if [ -e "$full_init_marker" ] && ! $force_full; then
+    echo "The imported platform changed PS initialization." >&2
+    echo "Power-cycle the EBAZ4205, then run: make upload-full" >&2
+    exit 3
+fi
+
+old_pid=""
+old_openocd_live=false
+if [ -r "$pid_file" ]; then
+    old_pid=$(tr -dc '0-9' <"$pid_file")
+    if [ -n "$old_pid" ] && sudo kill -0 "$old_pid" 2>/dev/null; then
+        old_openocd_live=true
+    fi
+fi
+
+programmed_bitstream_hash=""
+if [ -r "$bitstream_hash_file" ]; then
+    programmed_bitstream_hash=$(tr -dc '0-9a-fA-F' <"$bitstream_hash_file")
+fi
+
+if $force_full || ! $old_openocd_live; then
+    upload_mode=full-initialization
+    EBAZ_UPLOAD_CFG="$bundle_dir/upload-code.cfg"
+    EBAZ_LOAD_BITSTREAM=1
+elif [ "$programmed_bitstream_hash" = "$requested_bitstream_hash" ]; then
+    upload_mode=code-only
+    EBAZ_UPLOAD_CFG="$bundle_dir/upload-code-fast.cfg"
+    EBAZ_LOAD_BITSTREAM=0
+else
+    upload_mode=bitstream-and-code
+    EBAZ_UPLOAD_CFG="$bundle_dir/upload-code-fast.cfg"
+    EBAZ_LOAD_BITSTREAM=1
+fi
+
+if $old_openocd_live; then
+    echo "Refreshing the OpenOCD connection (stopping process $old_pid)..."
+    sudo kill "$old_pid"
+    for _ in $(seq 1 30); do
+        sudo kill -0 "$old_pid" 2>/dev/null || break
+        sleep 0.1
+    done
+fi
+
+EBAZ_PIDFILE=$pid_file
+export EBAZ_BUNDLE_DIR EBAZ_ELF EBAZ_BITSTREAM EBAZ_ENTRY EBAZ_PIDFILE
+export EBAZ_UPLOAD_CFG EBAZ_LOAD_BITSTREAM
+
+timestamp=$(date '+%Y%m%d-%H%M%S')
+log_file="$log_dir/${timestamp}-code.log"
+uart_log="$log_dir/${timestamp}-uart.log"
+
+{
+    echo "time=$(date --iso-8601=seconds)"
+    echo "script=upload-code"
+    echo "mode=$upload_mode"
+    echo "elf=$EBAZ_ELF"
+    echo "bitstream=$EBAZ_BITSTREAM"
+    echo "entry=$EBAZ_ENTRY"
+    echo "previous_openocd_pid=${old_pid:-none}"
+    echo "requested_bitstream_sha256=$requested_bitstream_hash"
+    echo "programmed_bitstream_sha256=${programmed_bitstream_hash:-unknown}"
+    sha256sum "$EBAZ_ELF" "$EBAZ_BITSTREAM"
+    uname -a
+} | tee "$log_file"
+
+uart_pid=""
+if [ -e /dev/ttyUSB0 ]; then
+    (
+        stty -F /dev/ttyUSB0 115200 cs8 -cstopb -parenb -ixon -ixoff -crtscts raw
+        timeout 45s stdbuf -o0 cat /dev/ttyUSB0
+    ) >"$uart_log" 2>&1 &
+    uart_pid=$!
+    echo "uart_capture=/dev/ttyUSB0,115200 -> $uart_log" | tee -a "$log_file"
+else
+    echo "uart_capture=skipped (/dev/ttyUSB0 absent)" | tee -a "$log_file"
+fi
+
+if [ "$upload_mode" = full-initialization ]; then
+    echo "Full path: PS initialization, bitstream, then ELF." | tee -a "$log_file"
+elif [ "$upload_mode" = bitstream-and-code ]; then
+    echo "Fast path: changed bitstream, then ELF; PS initialization is skipped." | tee -a "$log_file"
+else
+    echo "Fast path: ELF only; PS initialization and bitstream upload are skipped." | tee -a "$log_file"
+fi
+
+sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM \
+    "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
+sudo_job=$!
+
+status=1
+for _ in $(seq 1 180); do
+    if grep -q 'Application started at' "$log_file"; then
+        status=0
+        break
+    fi
+    if ! kill -0 "$sudo_job" 2>/dev/null; then
+        break
+    fi
+    sleep 0.2
+done
+
+if [ "$status" -eq 0 ]; then
+    printf '%s\n' "$requested_bitstream_hash" >"$bitstream_hash_file"
+    if [ "$upload_mode" = full-initialization ]; then
+        rm -f -- "$full_init_marker"
+    fi
+fi
+
+if [ -n "$uart_pid" ]; then
+    sleep 3
+    kill "$uart_pid" 2>/dev/null || true
+    wait "$uart_pid" 2>/dev/null || true
+    echo "--- UART capture ---" | tee -a "$log_file"
+    tee -a "$log_file" <"$uart_log"
+    echo "--- end UART capture ---" | tee -a "$log_file"
+fi
+
+echo "exit_status=$status" | tee -a "$log_file"
+echo "Log saved to: $log_file"
+if [ "$status" -eq 0 ]; then
+    if [ "$upload_mode" = code-only ]; then
+        echo "Fast upload complete: only the ELF was transferred."
+    elif [ "$upload_mode" = bitstream-and-code ]; then
+        echo "Bitstream changed: bitstream and ELF transferred without PS initialization."
+    else
+        echo "Initial upload complete: PS initialized, then bitstream and ELF transferred."
+    fi
+    echo "OpenOCD remains attached so the next run can select the fast path."
+    echo "PID file: $pid_file"
+else
+    tail -80 "$log_file"
+    if [ "$upload_mode" != full-initialization ]; then
+        echo "If the board was reset or power-cycled, power-cycle it cleanly and run: $0 --full" >&2
+    fi
+fi
+exit "$status"
