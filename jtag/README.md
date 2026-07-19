@@ -58,6 +58,13 @@ session:
 ./upload-code --full
 ```
 
+UART capture is disabled by default. Enable it explicitly when needed:
+
+```sh
+./upload-code --uart
+./upload-code --full --uart
+```
+
 The application entry point is read from the ELF automatically. Both uploads
 are volatile and are lost when the EBAZ4205 is reset or powered off.
 
@@ -70,10 +77,10 @@ initialization.
 
 ## Diagnostic logs
 
-Every run saves a timestamped OpenOCD log under `logs/`. `upload-code` also
-captures `/dev/ttyUSB0` at 115200 baud during the upload and saves a matching
-`*-uart.log`. The UART adapter must not be open in another terminal while the
-automatic capture is active.
+Every run saves a timestamped OpenOCD log under `logs/`. With `--uart`,
+`upload-code` also captures `/dev/ttyUSB0` at 115200 baud and saves a matching
+`*-uart.log`. Without that option it never opens the UART device. The adapter
+must not be open in another terminal while capture is active.
 
 After `upload-code`, OpenOCD remains attached in the background because this
 OpenOCD/Cortex-A9 combination halts CPU0 during target teardown. Its PID is in

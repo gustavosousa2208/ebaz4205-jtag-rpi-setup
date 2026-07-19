@@ -4,21 +4,42 @@ set -euo pipefail
 bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$bundle_dir/.." && pwd)
 force_full=false
-if [ "${1:-}" = "--full" ]; then
-    force_full=true
-    shift
-fi
+capture_uart=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --full)
+            force_full=true
+            shift
+            ;;
+        --uart)
+            capture_uart=true
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            echo "Usage: $0 [--full] [--uart] [application.elf] [design.bit]" >&2
+            exit 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 elf=${1:-$project_dir/build/hello.elf}
 bitstream=${2:-$project_dir/hardware/ebaz_test.bit}
 
 if [ ! -r "$elf" ]; then
     echo "ELF not found or unreadable: $elf" >&2
-    echo "Usage: $0 [--full] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full] [--uart] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if [ ! -r "$bitstream" ]; then
     echo "Bitstream not found or unreadable: $bitstream" >&2
-    echo "Usage: $0 [--full] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full] [--uart] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if ! command -v arm-none-eabi-readelf >/dev/null 2>&1; then
@@ -109,15 +130,17 @@ uart_log="$log_dir/${timestamp}-uart.log"
 } | tee "$log_file"
 
 uart_pid=""
-if [ -e /dev/ttyUSB0 ]; then
+if $capture_uart && [ -e /dev/ttyUSB0 ]; then
     (
         stty -F /dev/ttyUSB0 115200 cs8 -cstopb -parenb -ixon -ixoff -crtscts raw
         timeout 45s stdbuf -o0 cat /dev/ttyUSB0
     ) >"$uart_log" 2>&1 &
     uart_pid=$!
     echo "uart_capture=/dev/ttyUSB0,115200 -> $uart_log" | tee -a "$log_file"
-else
+elif $capture_uart; then
     echo "uart_capture=skipped (/dev/ttyUSB0 absent)" | tee -a "$log_file"
+else
+    echo "uart_capture=disabled (use --uart to enable)" | tee -a "$log_file"
 fi
 
 if [ "$upload_mode" = full-initialization ]; then

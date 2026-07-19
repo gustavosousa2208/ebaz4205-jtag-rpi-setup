@@ -15,6 +15,7 @@ LDFLAGS := -T $(APP_DIR)/linker.ld -nostdlib -Wl,--gc-sections \
 
 ELF := $(BUILD_DIR)/hello.elf
 OBJECTS := $(BUILD_DIR)/start.o $(BUILD_DIR)/hello.o
+UART_FLAG = $(if $(filter 1 yes true,$(UART)),--uart)
 
 .PHONY: all clean upload upload-full bitstream platform
 
@@ -34,10 +35,10 @@ $(BUILD_DIR):
 	mkdir -p $@
 
 upload: $(ELF)
-	$(JTAG_DIR)/upload-code
+	$(JTAG_DIR)/upload-code $(UART_FLAG)
 
 upload-full: $(ELF)
-	$(JTAG_DIR)/upload-code --full
+	$(JTAG_DIR)/upload-code --full $(UART_FLAG)
 
 bitstream:
 	$(JTAG_DIR)/upload-bitstream

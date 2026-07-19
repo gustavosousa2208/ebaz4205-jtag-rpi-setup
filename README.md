@@ -19,13 +19,16 @@ From this directory:
 make                 # compile build/hello.elf
 make upload-full     # after an EBAZ4205 reset or power cycle
 make upload          # later fast ELF-only uploads
+make upload UART=1   # upload and capture /dev/ttyUSB0
 make bitstream       # upload only hardware/ebaz_test.bit
 make clean
 ```
 
 The upload scripts find the ELF and bitstream from this layout automatically.
-You may still pass explicit files directly to `jtag/upload-code` when needed.
-See `jtag/README.md` for wiring, UART, and diagnostic details.
+UART capture is disabled by default, so uploads do not open `/dev/ttyUSB0`.
+Pass `UART=1` to either upload Make target when a UART log is wanted. You may
+still pass explicit files directly to `jtag/upload-code` when needed. See
+`jtag/README.md` for wiring, UART, and diagnostic details.
 
 ## Updating the Vivado platform
 
