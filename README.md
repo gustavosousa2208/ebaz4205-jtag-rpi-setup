@@ -11,6 +11,31 @@ the self-contained Raspberry Pi GPIO-JTAG/OpenOCD tools.
 - `jtag/`: bundled OpenOCD, board configuration, upload scripts, and logs
 - `tools/`: project maintenance helpers
 
+## Raspberry Pi JTAG pinout
+
+| Raspberry Pi 4 physical pin | GPIO | JTAG signal | EBAZ4205 J8 pin |
+|---:|---:|:---:|---:|
+| 23 | GPIO11 | TCK | 6 |
+| 24 | GPIO8 | TMS | 4 |
+| 19 | GPIO10 | TDI | 10 |
+| 21 | GPIO9 | TDO | 8 |
+| 20 | GND | GND | 7 |
+
+or you can read it like this, looking in front, ignoring the first top 4, then looking to the ones in the left you have in the order
+
+TDI
+TDO
+TCK
+TMS
+VCC
+
+all on the right are GND
+
+
+Connect the grounds, but do **not** connect power between the Raspberry Pi and
+the EBAZ4205. In particular, TMS is Raspberry Pi physical pin 24 (GPIO8), not
+physical pin 22 (GPIO25).
+
 ## Build and upload
 
 From this directory:
