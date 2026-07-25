@@ -101,11 +101,11 @@ if [ -r "$pid_file" ]; then
 fi
 
 programmed_bitstream_hash=""
-if $old_openocd_live && [ -r "$bitstream_hash_file" ]; then
-    programmed_bitstream_hash=$(tr -dc '0-9a-fA-F' <"$bitstream_hash_file")
+if [ -r "$pl_verified_hash_file" ]; then
+    programmed_bitstream_hash=$(tr -dc '0-9a-fA-F' <"$pl_verified_hash_file")
 fi
 
-if $force_full || ! $old_openocd_live; then
+if $force_full || [ -z "$programmed_bitstream_hash" ]; then
     upload_mode=full-initialization
     EBAZ_UPLOAD_CFG="$bundle_dir/upload-code.cfg"
     EBAZ_LOAD_BITSTREAM=1
@@ -238,6 +238,10 @@ if [ "$status" -eq 0 ]; then
 elif ebaz_process_alive "$openocd_job"; then
     echo "Upload failed or timed out; stopping OpenOCD." | tee -a "$log_file"
     ebaz_stop_process "$openocd_job"
+fi
+if [ "$status" -ne 0 ]; then
+    ebaz_remove_file "$bitstream_hash_file"
+    ebaz_remove_file "$pl_verified_hash_file"
 fi
 
 if [ -n "$uart_pid" ]; then

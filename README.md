@@ -72,6 +72,12 @@ Pass `UART=1` to either upload Make target when a UART log is wanted. You may
 still pass explicit files directly to `jtag/upload-code` when needed. See
 `jtag/README.md` for wiring, UART, and diagnostic details.
 
+Successful PL verification is recorded by bitstream hash. Later `make upload`
+runs skip the bitstream when its hash is unchanged, even though OpenOCD is
+stopped between commands. After a board reset or power cycle, use
+`make upload-full`; the host cannot infer that volatile FPGA configuration was
+lost.
+
 ## Updating the Vivado platform
 
 After modifying the existing Vivado design, generate the bitstream and export
