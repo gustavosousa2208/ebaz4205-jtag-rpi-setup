@@ -25,7 +25,9 @@ if [ ! -r "$bitstream" ]; then
 fi
 
 EBAZ_BITSTREAM=$(ebaz_abs_path "$bitstream")
-export EBAZ_BITSTREAM EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL
+EBAZ_BUNDLE_DIR=$bundle_dir
+export EBAZ_BITSTREAM EBAZ_BUNDLE_DIR EBAZ_PLD_DEVICE
+export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL
 
 log_dir="$bundle_dir/logs"
 mkdir -p "$log_dir"
@@ -38,6 +40,7 @@ log_file="$log_dir/${timestamp}-bitstream.log"
     echo "host=$EBAZ_HOST_OS"
     echo "adapter=$EBAZ_JTAG_ADAPTER"
     echo "openocd=$EBAZ_OPENOCD"
+    echo "pld_device=$EBAZ_PLD_DEVICE"
     echo "bitstream=$EBAZ_BITSTREAM"
     ebaz_sha256_report "$EBAZ_BITSTREAM"
     uname -a
@@ -45,7 +48,7 @@ log_file="$log_dir/${timestamp}-bitstream.log"
 
 set +e
 if [ "$EBAZ_USE_SUDO" = 1 ]; then
-    sudo --preserve-env=EBAZ_BITSTREAM,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL \
+    sudo --preserve-env=EBAZ_BITSTREAM,EBAZ_BUNDLE_DIR,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL \
         "$EBAZ_OPENOCD" \
         -s "$EBAZ_OPENOCD_SCRIPTS" \
         -f "$EBAZ_ADAPTER_CFG" \

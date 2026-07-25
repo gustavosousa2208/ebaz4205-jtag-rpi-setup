@@ -32,6 +32,15 @@ ebaz_init_host() {
         return 2
     fi
 
+    if [ -z "${EBAZ_PLD_DEVICE:-}" ]; then
+        if grep -q '^[[:space:]]*pld create ' \
+            "$EBAZ_OPENOCD_SCRIPTS/target/zynq_7000.cfg"; then
+            EBAZ_PLD_DEVICE=zynq_pl.pld
+        else
+            EBAZ_PLD_DEVICE=0
+        fi
+    fi
+
     if [ -z "${EBAZ_USE_SUDO:-}" ]; then
         if [ "$EBAZ_HOST_OS" = Linux ]; then
             EBAZ_USE_SUDO=1
@@ -53,7 +62,8 @@ ebaz_init_host() {
         fi
     fi
 
-    export EBAZ_HOST_OS EBAZ_OPENOCD EBAZ_OPENOCD_SCRIPTS EBAZ_USE_SUDO
+    export EBAZ_HOST_OS EBAZ_OPENOCD EBAZ_OPENOCD_SCRIPTS EBAZ_PLD_DEVICE
+    export EBAZ_USE_SUDO
     export EBAZ_UART_DEVICE
 }
 
@@ -95,6 +105,15 @@ ebaz_stop_process() {
         sudo kill "$1"
     else
         kill "$1"
+    fi
+}
+
+ebaz_remove_file() {
+    [ -e "$1" ] || return 0
+    if [ "$EBAZ_USE_SUDO" = 1 ]; then
+        sudo rm -f -- "$1"
+    else
+        rm -f -- "$1"
     fi
 }
 

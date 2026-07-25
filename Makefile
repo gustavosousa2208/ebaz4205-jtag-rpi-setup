@@ -15,6 +15,9 @@ LDFLAGS := -T $(APP_DIR)/linker.ld -nostdlib -Wl,--gc-sections \
 
 ELF := $(BUILD_DIR)/hello.elf
 OBJECTS := $(BUILD_DIR)/start.o $(BUILD_DIR)/hello.o
+UPLOAD_ELF ?= $(ELF)
+UPLOAD_BITSTREAM ?= $(PROJECT_DIR)/hardware/ebaz_test.bit
+UPLOAD_DEPS = $(if $(filter $(ELF),$(UPLOAD_ELF)),$(ELF))
 UART_FLAG = $(if $(filter 1 yes true,$(UART)),--uart)
 
 .PHONY: all clean probe upload upload-full bitstream platform
@@ -34,17 +37,17 @@ $(BUILD_DIR)/hello.o: $(APP_DIR)/hello.c | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir -p $@
 
-upload: $(ELF)
-	$(JTAG_DIR)/upload-code $(UART_FLAG)
+upload: $(UPLOAD_DEPS)
+	$(JTAG_DIR)/upload-code $(UART_FLAG) "$(UPLOAD_ELF)" "$(UPLOAD_BITSTREAM)"
 
-upload-full: $(ELF)
-	$(JTAG_DIR)/upload-code --full $(UART_FLAG)
+upload-full: $(UPLOAD_DEPS)
+	$(JTAG_DIR)/upload-code --full $(UART_FLAG) "$(UPLOAD_ELF)" "$(UPLOAD_BITSTREAM)"
 
 probe:
 	$(JTAG_DIR)/probe
 
 bitstream:
-	$(JTAG_DIR)/upload-bitstream
+	$(JTAG_DIR)/upload-bitstream "$(UPLOAD_BITSTREAM)"
 
 platform:
 	@test -n "$(XSA)" || { \

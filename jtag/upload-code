@@ -9,6 +9,7 @@ ebaz_init_host
 
 force_full=false
 capture_uart=false
+uart_seconds=${EBAZ_UART_SECONDS:-3}
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --full)
@@ -19,13 +20,22 @@ while [ "$#" -gt 0 ]; do
             capture_uart=true
             shift
             ;;
+        --uart-seconds)
+            capture_uart=true
+            uart_seconds=${2:-}
+            if ! [[ "$uart_seconds" =~ ^[0-9]+$ ]] || [ "$uart_seconds" -lt 1 ]; then
+                echo "--uart-seconds requires a positive integer." >&2
+                exit 2
+            fi
+            shift 2
+            ;;
         --)
             shift
             break
             ;;
         -*)
             echo "Unknown option: $1" >&2
-            echo "Usage: $0 [--full] [--uart] [application.elf] [design.bit]" >&2
+            echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [application.elf] [design.bit]" >&2
             exit 2
             ;;
         *)
@@ -38,12 +48,12 @@ bitstream=${2:-$project_dir/hardware/ebaz_test.bit}
 
 if [ ! -r "$elf" ]; then
     echo "ELF not found or unreadable: $elf" >&2
-    echo "Usage: $0 [--full] [--uart] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if [ ! -r "$bitstream" ]; then
     echo "Bitstream not found or unreadable: $bitstream" >&2
-    echo "Usage: $0 [--full] [--uart] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if ! command -v arm-none-eabi-readelf >/dev/null 2>&1; then
@@ -65,7 +75,9 @@ log_dir="$bundle_dir/logs"
 mkdir -p "$run_dir" "$log_dir"
 pid_file="$run_dir/openocd.pid"
 bitstream_hash_file="$run_dir/bitstream.sha256"
+pl_verified_hash_file="$run_dir/pl-verified.sha256"
 full_init_marker="$run_dir/full-init-required"
+success_marker="$run_dir/upload-success"
 requested_bitstream_hash=$(ebaz_sha256_value "$EBAZ_BITSTREAM")
 
 if [ -e "$full_init_marker" ] && ! $force_full; then
@@ -84,7 +96,7 @@ if [ -r "$pid_file" ]; then
 fi
 
 programmed_bitstream_hash=""
-if [ -r "$bitstream_hash_file" ]; then
+if $old_openocd_live && [ -r "$bitstream_hash_file" ]; then
     programmed_bitstream_hash=$(tr -dc '0-9a-fA-F' <"$bitstream_hash_file")
 fi
 
@@ -112,8 +124,15 @@ if $old_openocd_live; then
 fi
 
 EBAZ_PIDFILE=$pid_file
+EBAZ_SUCCESS_MARKER=$success_marker
+ebaz_remove_file "$success_marker"
+if [ "$EBAZ_LOAD_BITSTREAM" = 1 ]; then
+    ebaz_remove_file "$bitstream_hash_file"
+    ebaz_remove_file "$pl_verified_hash_file"
+fi
+
 export EBAZ_BUNDLE_DIR EBAZ_ELF EBAZ_BITSTREAM EBAZ_ENTRY EBAZ_PIDFILE
-export EBAZ_UPLOAD_CFG EBAZ_LOAD_BITSTREAM
+export EBAZ_UPLOAD_CFG EBAZ_LOAD_BITSTREAM EBAZ_SUCCESS_MARKER EBAZ_PLD_DEVICE
 export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL EBAZ_OPENOCD
 export EBAZ_OPENOCD_SCRIPTS EBAZ_USE_SUDO
 
@@ -128,6 +147,7 @@ uart_log="$log_dir/${timestamp}-uart.log"
     echo "host=$EBAZ_HOST_OS"
     echo "adapter=$EBAZ_JTAG_ADAPTER"
     echo "openocd=$EBAZ_OPENOCD"
+    echo "pld_device=$EBAZ_PLD_DEVICE"
     echo "elf=$EBAZ_ELF"
     echo "bitstream=$EBAZ_BITSTREAM"
     echo "entry=$EBAZ_ENTRY"
@@ -141,11 +161,10 @@ uart_log="$log_dir/${timestamp}-uart.log"
 
 uart_pid=""
 if $capture_uart && [ -n "${EBAZ_UART_DEVICE:-}" ] && [ -e "$EBAZ_UART_DEVICE" ]; then
-    (
-        ebaz_configure_uart "$EBAZ_UART_DEVICE"
-        cat "$EBAZ_UART_DEVICE"
-    ) >"$uart_log" 2>&1 &
+    python3 "$bundle_dir/uart-capture.py" "$EBAZ_UART_DEVICE" 3600 \
+        >"$uart_log" 2>&1 &
     uart_pid=$!
+    sleep 0.2
     echo "uart_capture=$EBAZ_UART_DEVICE,115200 -> $uart_log" | tee -a "$log_file"
 elif $capture_uart; then
     echo "uart_capture=skipped (no serial device found)" | tee -a "$log_file"
@@ -162,16 +181,16 @@ else
 fi
 
 if [ "$EBAZ_USE_SUDO" = 1 ]; then
-    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO \
+    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_SUCCESS_MARKER,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO \
         "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
 else
-    "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
+    nohup "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 </dev/null &
 fi
 openocd_job=$!
 
 status=1
-for _ in $(seq 1 180); do
-    if grep -q 'Application started at' "$log_file"; then
+for _ in $(seq 1 450); do
+    if [ -s "$success_marker" ]; then
         status=0
         break
     fi
@@ -183,13 +202,19 @@ done
 
 if [ "$status" -eq 0 ]; then
     printf '%s\n' "$requested_bitstream_hash" >"$bitstream_hash_file"
+    if [ "$EBAZ_LOAD_BITSTREAM" = 1 ]; then
+        printf '%s\n' "$requested_bitstream_hash" >"$pl_verified_hash_file"
+    fi
     if [ "$upload_mode" = full-initialization ]; then
         rm -f -- "$full_init_marker"
     fi
+elif ebaz_process_alive "$openocd_job"; then
+    echo "Upload failed or timed out; stopping OpenOCD." | tee -a "$log_file"
+    ebaz_stop_process "$openocd_job"
 fi
 
 if [ -n "$uart_pid" ]; then
-    sleep 3
+    sleep "$uart_seconds"
     kill "$uart_pid" 2>/dev/null || true
     wait "$uart_pid" 2>/dev/null || true
     echo "--- UART capture ---" | tee -a "$log_file"

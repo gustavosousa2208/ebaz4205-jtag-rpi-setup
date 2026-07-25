@@ -22,6 +22,7 @@ Select another probe or UART explicitly:
 ```sh
 EBAZ_CMSIS_DAP_SERIAL=012345ABCDEF ./upload-code --full
 EBAZ_UART_DEVICE=/dev/cu.usbserial-A5069RR4 ./upload-code --uart
+./upload-code --full --uart-seconds 25 /path/to/app.elf /path/to/design.bit
 ```
 
 macOS uploads run without `sudo`.
@@ -109,6 +110,9 @@ Every run saves a timestamped OpenOCD log under `logs/`. With `--uart`,
 `upload-code` also captures the detected UART at 115200 baud and saves a
 matching `*-uart.log`. Without that option it never opens the UART device. The
 adapter must not be open in another terminal while capture is active.
+The capture helper keeps one serial descriptor open while configuring and
+reading it; this avoids macOS resetting the FTDI baud rate when a second
+program opens the device.
 
 After `upload-code`, OpenOCD remains attached in the background because this
 OpenOCD/Cortex-A9 combination halts CPU0 during target teardown. Its PID is in

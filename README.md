@@ -58,6 +58,9 @@ the first `/dev/cu.usbserial-*` device. Override them when needed:
 EBAZ_OPENOCD=/path/to/openocd make upload-full
 EBAZ_CMSIS_DAP_SERIAL=012345ABCDEF make upload-full
 EBAZ_UART_DEVICE=/dev/cu.usbserial-A5069RR4 make upload UART=1
+make upload-full \
+    UPLOAD_ELF=/path/to/application.elf \
+    UPLOAD_BITSTREAM=/path/to/design.bit
 ```
 
 Install OpenOCD on macOS with `brew install open-ocd`. No `sudo` is used on
