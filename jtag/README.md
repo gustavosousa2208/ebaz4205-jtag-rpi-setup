@@ -114,6 +114,10 @@ The capture helper keeps one serial descriptor open while configuring and
 reading it; this avoids macOS resetting the FTDI baud rate when a second
 program opens the device.
 
+OpenOCD is stopped automatically after the requested UART capture, so the
+command returns without `Ctrl-C`. Use `--keep-openocd` only when intentionally
+keeping the debugger attached for a later fast ELF-only upload.
+
 After `upload-code`, OpenOCD remains attached in the background because this
 OpenOCD/Cortex-A9 combination halts CPU0 during target teardown. Its PID is in
 `run/openocd.pid`. Do not stop it between uploads if you want the fast ELF-only

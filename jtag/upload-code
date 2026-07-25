@@ -9,6 +9,7 @@ ebaz_init_host
 
 force_full=false
 capture_uart=false
+keep_openocd=false
 uart_seconds=${EBAZ_UART_SECONDS:-3}
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -29,13 +30,17 @@ while [ "$#" -gt 0 ]; do
             fi
             shift 2
             ;;
+        --keep-openocd)
+            keep_openocd=true
+            shift
+            ;;
         --)
             shift
             break
             ;;
         -*)
             echo "Unknown option: $1" >&2
-            echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [application.elf] [design.bit]" >&2
+            echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
             exit 2
             ;;
         *)
@@ -48,12 +53,12 @@ bitstream=${2:-$project_dir/hardware/ebaz_test.bit}
 
 if [ ! -r "$elf" ]; then
     echo "ELF not found or unreadable: $elf" >&2
-    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if [ ! -r "$bitstream" ]; then
     echo "Bitstream not found or unreadable: $bitstream" >&2
-    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if ! command -v arm-none-eabi-readelf >/dev/null 2>&1; then
@@ -160,6 +165,28 @@ uart_log="$log_dir/${timestamp}-uart.log"
 } | tee "$log_file"
 
 uart_pid=""
+openocd_job=""
+
+cleanup() {
+    if [ -n "$uart_pid" ] && kill -0 "$uart_pid" 2>/dev/null; then
+        kill "$uart_pid" 2>/dev/null || true
+        wait "$uart_pid" 2>/dev/null || true
+    fi
+    uart_pid=""
+
+    if ! $keep_openocd && [ -r "$pid_file" ]; then
+        cleanup_openocd_pid=$(tr -dc '0-9' <"$pid_file")
+        if [ -n "$cleanup_openocd_pid" ] &&
+           ebaz_process_alive "$cleanup_openocd_pid"; then
+            ebaz_stop_process "$cleanup_openocd_pid" 2>/dev/null || true
+        fi
+        ebaz_remove_file "$pid_file"
+    fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 if $capture_uart && [ -n "${EBAZ_UART_DEVICE:-}" ] && [ -e "$EBAZ_UART_DEVICE" ]; then
     python3 "$bundle_dir/uart-capture.py" "$EBAZ_UART_DEVICE" 3600 \
         >"$uart_log" 2>&1 &
@@ -217,6 +244,7 @@ if [ -n "$uart_pid" ]; then
     sleep "$uart_seconds"
     kill "$uart_pid" 2>/dev/null || true
     wait "$uart_pid" 2>/dev/null || true
+    uart_pid=""
     echo "--- UART capture ---" | tee -a "$log_file"
     tee -a "$log_file" <"$uart_log"
     echo "--- end UART capture ---" | tee -a "$log_file"
@@ -232,8 +260,12 @@ if [ "$status" -eq 0 ]; then
     else
         echo "Initial upload complete: PS initialized, then bitstream and ELF transferred."
     fi
-    echo "OpenOCD remains attached so the next run can select the fast path."
-    echo "PID file: $pid_file"
+    if $keep_openocd; then
+        echo "OpenOCD remains attached for the next fast upload."
+        echo "PID file: $pid_file"
+    else
+        echo "Stopping OpenOCD so this command exits cleanly."
+    fi
 else
     tail -80 "$log_file"
     if [ "$upload_mode" != full-initialization ]; then
