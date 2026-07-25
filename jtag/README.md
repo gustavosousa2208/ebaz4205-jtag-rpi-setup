@@ -1,10 +1,38 @@
-# EBAZ4205 Raspberry Pi JTAG tools
+# EBAZ4205 JTAG tools
 
-This directory contains the tested OpenOCD executable, the minimal Pi 4 GPIO
-and Zynq-7000 configuration, and PS initialization generated from the project's
-`hardware/ebaz_test.xsa`.
+This directory supports a Sipeed RV CMSIS-DAP connected to macOS and native
+Raspberry Pi GPIO-JTAG. It also contains the Zynq-7000 configuration and PS
+initialization generated from the project's `hardware/ebaz_test.xsa`.
 
-## Wiring
+## macOS connections
+
+The default adapter is the Sipeed RV CMSIS-DAP with serial `012345ABCDEF`.
+Homebrew OpenOCD is selected automatically. The board UART is detected as the
+first `/dev/cu.usbserial-*` device.
+
+Verify that macOS sees both adapters:
+
+```sh
+system_profiler SPUSBDataType
+ls /dev/cu.usbserial-*
+```
+
+Select another probe or UART explicitly:
+
+```sh
+EBAZ_CMSIS_DAP_SERIAL=012345ABCDEF ./upload-code --full
+EBAZ_UART_DEVICE=/dev/cu.usbserial-A5069RR4 ./upload-code --uart
+```
+
+macOS uploads run without `sudo`.
+
+Probe the adapter and both Zynq JTAG TAPs without programming:
+
+```sh
+./probe
+```
+
+## Raspberry Pi GPIO wiring
 
 | Pi physical pin | GPIO | EBAZ4205 J8 |
 |---:|---:|---:|
@@ -78,9 +106,9 @@ initialization.
 ## Diagnostic logs
 
 Every run saves a timestamped OpenOCD log under `logs/`. With `--uart`,
-`upload-code` also captures `/dev/ttyUSB0` at 115200 baud and saves a matching
-`*-uart.log`. Without that option it never opens the UART device. The adapter
-must not be open in another terminal while capture is active.
+`upload-code` also captures the detected UART at 115200 baud and saves a
+matching `*-uart.log`. Without that option it never opens the UART device. The
+adapter must not be open in another terminal while capture is active.
 
 After `upload-code`, OpenOCD remains attached in the background because this
 OpenOCD/Cortex-A9 combination halts CPU0 during target teardown. Its PID is in

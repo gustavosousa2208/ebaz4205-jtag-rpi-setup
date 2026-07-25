@@ -2,6 +2,9 @@
 set -euo pipefail
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+bundle_dir="$project_dir/jtag"
+. "$bundle_dir/host-tools"
+
 source_xsa=${1:-}
 
 if [ -z "$source_xsa" ]; then
@@ -17,7 +20,7 @@ if ! command -v unzip >/dev/null 2>&1; then
     exit 2
 fi
 
-source_xsa=$(readlink -f -- "$source_xsa")
+source_xsa=$(ebaz_abs_path "$source_xsa")
 hardware_dir="$project_dir/hardware"
 jtag_xsa_dir="$project_dir/jtag/xsa"
 run_dir="$project_dir/jtag/run"
@@ -26,8 +29,15 @@ destination_bit="$hardware_dir/ebaz_test.bit"
 destination_ps7="$jtag_xsa_dir/ps7_init.tcl"
 full_init_marker="$run_dir/full-init-required"
 
-mapfile -t bit_entries < <(unzip -Z1 "$source_xsa" | awk 'tolower($0) ~ /[.]bit$/')
-mapfile -t ps7_entries < <(unzip -Z1 "$source_xsa" | awk -F/ 'tolower($NF) == "ps7_init.tcl"')
+bit_entries=()
+while IFS= read -r entry; do
+    bit_entries[${#bit_entries[@]}]=$entry
+done < <(unzip -Z1 "$source_xsa" | awk 'tolower($0) ~ /[.]bit$/')
+
+ps7_entries=()
+while IFS= read -r entry; do
+    ps7_entries[${#ps7_entries[@]}]=$entry
+done < <(unzip -Z1 "$source_xsa" | awk -F/ 'tolower($NF) == "ps7_init.tcl"')
 
 if [ "${#bit_entries[@]}" -ne 1 ]; then
     echo "Expected exactly one .bit file in the XSA; found ${#bit_entries[@]}." >&2
@@ -72,8 +82,8 @@ if [ "$ps7_changed" = yes ]; then
     {
         echo "A platform import changed jtag/xsa/ps7_init.tcl."
         echo "source=$source_xsa"
-        echo "time=$(date --iso-8601=seconds)"
-        sha256sum "$destination_ps7"
+        echo "time=$(ebaz_iso_time)"
+        ebaz_sha256_report "$destination_ps7"
     } >"$full_init_marker"
 fi
 

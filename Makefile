@@ -17,7 +17,7 @@ ELF := $(BUILD_DIR)/hello.elf
 OBJECTS := $(BUILD_DIR)/start.o $(BUILD_DIR)/hello.o
 UART_FLAG = $(if $(filter 1 yes true,$(UART)),--uart)
 
-.PHONY: all clean upload upload-full bitstream platform
+.PHONY: all clean probe upload upload-full bitstream platform
 
 all: $(ELF)
 
@@ -39,6 +39,9 @@ upload: $(ELF)
 
 upload-full: $(ELF)
 	$(JTAG_DIR)/upload-code --full $(UART_FLAG)
+
+probe:
+	$(JTAG_DIR)/probe
 
 bitstream:
 	$(JTAG_DIR)/upload-bitstream

@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Source after setting bundle_dir. This canonicalizes the public adapter name
+# and resolves its OpenOCD configuration.
+case "${EBAZ_JTAG_ADAPTER:-cmsis-dap}" in
+    cmsis-dap|cmsis_dap|dap)
+        EBAZ_JTAG_ADAPTER=cmsis-dap
+        EBAZ_ADAPTER_CFG="$bundle_dir/adapters/cmsis-dap.cfg"
+        ;;
+    gpio|raspberrypi-gpio|raspberrypi_gpio)
+        EBAZ_JTAG_ADAPTER=raspberrypi-gpio
+        EBAZ_ADAPTER_CFG="$bundle_dir/adapters/raspberrypi-gpio.cfg"
+        ;;
+    *)
+        echo "Unsupported JTAG adapter: ${EBAZ_JTAG_ADAPTER}" >&2
+        echo "Supported adapters: cmsis-dap, raspberrypi-gpio" >&2
+        return 2 2>/dev/null || exit 2
+        ;;
+esac
+
+if [ "$EBAZ_JTAG_ADAPTER" = cmsis-dap ]; then
+    EBAZ_CMSIS_DAP_SERIAL=${EBAZ_CMSIS_DAP_SERIAL:-012345ABCDEF}
+fi
+
+export EBAZ_JTAG_ADAPTER EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL

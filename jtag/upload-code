@@ -3,6 +3,10 @@ set -euo pipefail
 
 bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_dir=$(CDPATH= cd -- "$bundle_dir/.." && pwd)
+. "$bundle_dir/select-adapter"
+. "$bundle_dir/host-tools"
+ebaz_init_host
+
 force_full=false
 capture_uart=false
 while [ "$#" -gt 0 ]; do
@@ -48,8 +52,8 @@ if ! command -v arm-none-eabi-readelf >/dev/null 2>&1; then
 fi
 
 EBAZ_BUNDLE_DIR=$bundle_dir
-EBAZ_ELF=$(readlink -f -- "$elf")
-EBAZ_BITSTREAM=$(readlink -f -- "$bitstream")
+EBAZ_ELF=$(ebaz_abs_path "$elf")
+EBAZ_BITSTREAM=$(ebaz_abs_path "$bitstream")
 EBAZ_ENTRY=$(arm-none-eabi-readelf -h "$EBAZ_ELF" | awk '/Entry point address:/ {print $4; exit}')
 if [ -z "$EBAZ_ENTRY" ]; then
     echo "Could not determine the entry point from: $EBAZ_ELF" >&2
@@ -62,7 +66,7 @@ mkdir -p "$run_dir" "$log_dir"
 pid_file="$run_dir/openocd.pid"
 bitstream_hash_file="$run_dir/bitstream.sha256"
 full_init_marker="$run_dir/full-init-required"
-requested_bitstream_hash=$(sha256sum "$EBAZ_BITSTREAM" | awk '{print $1}')
+requested_bitstream_hash=$(ebaz_sha256_value "$EBAZ_BITSTREAM")
 
 if [ -e "$full_init_marker" ] && ! $force_full; then
     echo "The imported platform changed PS initialization." >&2
@@ -74,7 +78,7 @@ old_pid=""
 old_openocd_live=false
 if [ -r "$pid_file" ]; then
     old_pid=$(tr -dc '0-9' <"$pid_file")
-    if [ -n "$old_pid" ] && sudo kill -0 "$old_pid" 2>/dev/null; then
+    if [ -n "$old_pid" ] && ebaz_process_alive "$old_pid"; then
         old_openocd_live=true
     fi
 fi
@@ -100,9 +104,9 @@ fi
 
 if $old_openocd_live; then
     echo "Refreshing the OpenOCD connection (stopping process $old_pid)..."
-    sudo kill "$old_pid"
+    ebaz_stop_process "$old_pid"
     for _ in $(seq 1 30); do
-        sudo kill -0 "$old_pid" 2>/dev/null || break
+        ebaz_process_alive "$old_pid" || break
         sleep 0.1
     done
 fi
@@ -110,35 +114,41 @@ fi
 EBAZ_PIDFILE=$pid_file
 export EBAZ_BUNDLE_DIR EBAZ_ELF EBAZ_BITSTREAM EBAZ_ENTRY EBAZ_PIDFILE
 export EBAZ_UPLOAD_CFG EBAZ_LOAD_BITSTREAM
+export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL EBAZ_OPENOCD
+export EBAZ_OPENOCD_SCRIPTS EBAZ_USE_SUDO
 
 timestamp=$(date '+%Y%m%d-%H%M%S')
 log_file="$log_dir/${timestamp}-code.log"
 uart_log="$log_dir/${timestamp}-uart.log"
 
 {
-    echo "time=$(date --iso-8601=seconds)"
+    echo "time=$(ebaz_iso_time)"
     echo "script=upload-code"
     echo "mode=$upload_mode"
+    echo "host=$EBAZ_HOST_OS"
+    echo "adapter=$EBAZ_JTAG_ADAPTER"
+    echo "openocd=$EBAZ_OPENOCD"
     echo "elf=$EBAZ_ELF"
     echo "bitstream=$EBAZ_BITSTREAM"
     echo "entry=$EBAZ_ENTRY"
     echo "previous_openocd_pid=${old_pid:-none}"
     echo "requested_bitstream_sha256=$requested_bitstream_hash"
     echo "programmed_bitstream_sha256=${programmed_bitstream_hash:-unknown}"
-    sha256sum "$EBAZ_ELF" "$EBAZ_BITSTREAM"
+    ebaz_sha256_report "$EBAZ_ELF"
+    ebaz_sha256_report "$EBAZ_BITSTREAM"
     uname -a
 } | tee "$log_file"
 
 uart_pid=""
-if $capture_uart && [ -e /dev/ttyUSB0 ]; then
+if $capture_uart && [ -n "${EBAZ_UART_DEVICE:-}" ] && [ -e "$EBAZ_UART_DEVICE" ]; then
     (
-        stty -F /dev/ttyUSB0 115200 cs8 -cstopb -parenb -ixon -ixoff -crtscts raw
-        timeout 45s stdbuf -o0 cat /dev/ttyUSB0
+        ebaz_configure_uart "$EBAZ_UART_DEVICE"
+        cat "$EBAZ_UART_DEVICE"
     ) >"$uart_log" 2>&1 &
     uart_pid=$!
-    echo "uart_capture=/dev/ttyUSB0,115200 -> $uart_log" | tee -a "$log_file"
+    echo "uart_capture=$EBAZ_UART_DEVICE,115200 -> $uart_log" | tee -a "$log_file"
 elif $capture_uart; then
-    echo "uart_capture=skipped (/dev/ttyUSB0 absent)" | tee -a "$log_file"
+    echo "uart_capture=skipped (no serial device found)" | tee -a "$log_file"
 else
     echo "uart_capture=disabled (use --uart to enable)" | tee -a "$log_file"
 fi
@@ -151,9 +161,13 @@ else
     echo "Fast path: ELF only; PS initialization and bitstream upload are skipped." | tee -a "$log_file"
 fi
 
-sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM \
+if [ "$EBAZ_USE_SUDO" = 1 ]; then
+    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO \
+        "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
+else
     "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
-sudo_job=$!
+fi
+openocd_job=$!
 
 status=1
 for _ in $(seq 1 180); do
@@ -161,7 +175,7 @@ for _ in $(seq 1 180); do
         status=0
         break
     fi
-    if ! kill -0 "$sudo_job" 2>/dev/null; then
+    if ! kill -0 "$openocd_job" 2>/dev/null; then
         break
     fi
     sleep 0.2

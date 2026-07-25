@@ -1,7 +1,7 @@
 # EBAZ4205 bare-metal project
 
 This project contains the Cortex-A9 application, Vivado hardware outputs, and
-the self-contained Raspberry Pi GPIO-JTAG/OpenOCD tools.
+JTAG/OpenOCD tools for macOS CMSIS-DAP and Raspberry Pi GPIO.
 
 ## Layout
 
@@ -42,15 +42,29 @@ From this directory:
 
 ```sh
 make                 # compile build/hello.elf
+make probe           # verify the adapter and Zynq JTAG chain
 make upload-full     # after an EBAZ4205 reset or power cycle
 make upload          # later fast ELF-only uploads
-make upload UART=1   # upload and capture /dev/ttyUSB0
+make upload UART=1   # upload and capture the detected FT232 UART
 make bitstream       # upload only hardware/ebaz_test.bit
 make clean
 ```
 
+On macOS, connect the Sipeed RV CMSIS-DAP and FT232 adapter directly to the
+Mac. The scripts automatically use Homebrew OpenOCD, the CMSIS-DAP probe, and
+the first `/dev/cu.usbserial-*` device. Override them when needed:
+
+```sh
+EBAZ_OPENOCD=/path/to/openocd make upload-full
+EBAZ_CMSIS_DAP_SERIAL=012345ABCDEF make upload-full
+EBAZ_UART_DEVICE=/dev/cu.usbserial-A5069RR4 make upload UART=1
+```
+
+Install OpenOCD on macOS with `brew install open-ocd`. No `sudo` is used on
+macOS.
+
 The upload scripts find the ELF and bitstream from this layout automatically.
-UART capture is disabled by default, so uploads do not open `/dev/ttyUSB0`.
+UART capture is disabled by default, so uploads do not open the serial device.
 Pass `UART=1` to either upload Make target when a UART log is wanted. You may
 still pass explicit files directly to `jtag/upload-code` when needed. See
 `jtag/README.md` for wiring, UART, and diagnostic details.

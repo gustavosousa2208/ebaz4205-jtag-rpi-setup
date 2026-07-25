@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$bundle_dir/select-adapter"
+. "$bundle_dir/host-tools"
+ebaz_init_host
+
+export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL
+
+echo "Host: $EBAZ_HOST_OS"
+echo "OpenOCD: $EBAZ_OPENOCD"
+echo "Adapter: $EBAZ_JTAG_ADAPTER"
+echo "UART: ${EBAZ_UART_DEVICE:-not detected}"
+
+if [ "$EBAZ_USE_SUDO" = 1 ]; then
+    sudo --preserve-env=EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL \
+        "$EBAZ_OPENOCD" \
+        -s "$EBAZ_OPENOCD_SCRIPTS" \
+        -f "$EBAZ_ADAPTER_CFG" \
+        -f "$bundle_dir/ebaz4205.cfg" \
+        -c init \
+        -c targets \
+        -c shutdown
+else
+    "$EBAZ_OPENOCD" \
+        -s "$EBAZ_OPENOCD_SCRIPTS" \
+        -f "$EBAZ_ADAPTER_CFG" \
+        -f "$bundle_dir/ebaz4205.cfg" \
+        -c init \
+        -c targets \
+        -c shutdown
+fi

@@ -1,0 +1,107 @@
+#!/bin/bash
+
+# Shared host compatibility for the Raspberry Pi and macOS launchers.
+
+ebaz_init_host() {
+    EBAZ_HOST_OS=$(uname -s)
+
+    if [ -z "${EBAZ_OPENOCD:-}" ]; then
+        if [ "$EBAZ_HOST_OS" = Darwin ]; then
+            EBAZ_OPENOCD=$(command -v openocd || true)
+        elif [ -x "$bundle_dir/bin/openocd" ]; then
+            EBAZ_OPENOCD="$bundle_dir/bin/openocd"
+        else
+            EBAZ_OPENOCD=$(command -v openocd || true)
+        fi
+    fi
+    if [ -z "$EBAZ_OPENOCD" ] || [ ! -x "$EBAZ_OPENOCD" ]; then
+        echo "OpenOCD was not found. Install it or set EBAZ_OPENOCD." >&2
+        return 2
+    fi
+
+    if [ -z "${EBAZ_OPENOCD_SCRIPTS:-}" ]; then
+        if [ "$EBAZ_HOST_OS" = Darwin ]; then
+            openocd_prefix=$(CDPATH= cd -- "$(dirname -- "$EBAZ_OPENOCD")/.." && pwd -P)
+            EBAZ_OPENOCD_SCRIPTS="$openocd_prefix/share/openocd/scripts"
+        else
+            EBAZ_OPENOCD_SCRIPTS="$bundle_dir/openocd-scripts"
+        fi
+    fi
+    if [ ! -d "$EBAZ_OPENOCD_SCRIPTS" ]; then
+        echo "OpenOCD scripts were not found: $EBAZ_OPENOCD_SCRIPTS" >&2
+        return 2
+    fi
+
+    if [ -z "${EBAZ_USE_SUDO:-}" ]; then
+        if [ "$EBAZ_HOST_OS" = Linux ]; then
+            EBAZ_USE_SUDO=1
+        else
+            EBAZ_USE_SUDO=0
+        fi
+    fi
+
+    if [ -z "${EBAZ_UART_DEVICE:-}" ]; then
+        if [ "$EBAZ_HOST_OS" = Darwin ]; then
+            for candidate in /dev/cu.usbserial-*; do
+                if [ -e "$candidate" ]; then
+                    EBAZ_UART_DEVICE=$candidate
+                    break
+                fi
+            done
+        elif [ -e /dev/ttyUSB0 ]; then
+            EBAZ_UART_DEVICE=/dev/ttyUSB0
+        fi
+    fi
+
+    export EBAZ_HOST_OS EBAZ_OPENOCD EBAZ_OPENOCD_SCRIPTS EBAZ_USE_SUDO
+    export EBAZ_UART_DEVICE
+}
+
+ebaz_abs_path() {
+    local input=$1
+    local directory
+    local filename
+    directory=$(CDPATH= cd -- "$(dirname -- "$input")" && pwd -P)
+    filename=$(basename -- "$input")
+    printf '%s/%s\n' "$directory" "$filename"
+}
+
+ebaz_sha256_value() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+ebaz_sha256_report() {
+    printf '%s  %s\n' "$(ebaz_sha256_value "$1")" "$1"
+}
+
+ebaz_iso_time() {
+    date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+ebaz_process_alive() {
+    if [ "$EBAZ_USE_SUDO" = 1 ]; then
+        sudo kill -0 "$1" 2>/dev/null
+    else
+        kill -0 "$1" 2>/dev/null
+    fi
+}
+
+ebaz_stop_process() {
+    if [ "$EBAZ_USE_SUDO" = 1 ]; then
+        sudo kill "$1"
+    else
+        kill "$1"
+    fi
+}
+
+ebaz_configure_uart() {
+    if [ "$EBAZ_HOST_OS" = Darwin ]; then
+        stty -f "$1" 115200 cs8 -cstopb -parenb -ixon -ixoff -crtscts raw
+    else
+        stty -F "$1" 115200 cs8 -cstopb -parenb -ixon -ixoff -crtscts raw
+    fi
+}
