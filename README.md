@@ -1,117 +1,97 @@
-# EBAZ4205 bare-metal project
+# EBAZ4205 bare-metal JTAG project
 
-This project contains the Cortex-A9 application, Vivado hardware outputs, and
-JTAG/OpenOCD tools for macOS CMSIS-DAP and Raspberry Pi GPIO.
+Cortex-A9 firmware, matching Zynq bitstream/XSA, and OpenOCD upload tools.
+The verified fast path uses Banana Pi M2 Zero Port-C MMIO JTAG.
 
-## Layout
+## Agent start
 
-- `app/`: editable C, startup assembly, and linker script
-- `build/`: generated ELF, object, and map files
-- `hardware/`: matching bitstream and XSA
-- `jtag/`: bundled OpenOCD, board configuration, upload scripts, and logs
-- `tools/`: project maintenance helpers
+```sh
+bd prime
+git status --short
+bd ready
+```
 
-## Raspberry Pi JTAG pinout
+Beads is the project task and memory source of truth. Do not replace it with a
+Markdown task list or import `.beads/issues.jsonl` during normal work.
 
-| Raspberry Pi 4 physical pin | GPIO | JTAG signal | EBAZ4205 J8 pin |
-|---:|---:|:---:|---:|
-| 23 | GPIO11 | TCK | 6 |
-| 24 | GPIO8 | TMS | 4 |
-| 19 | GPIO10 | TDI | 10 |
-| 21 | GPIO9 | TDO | 8 |
+## Verified Banana Pi setup
+
+| Banana Pi header | H2+ pin | Signal | EBAZ4205 J8 |
+|---:|:---:|:---:|---:|
+| 19 | PC0 | TDI | 10 |
+| 21 | PC1 | TDO | 8 |
+| 23 | PC2 | TCK | 6 |
+| 24 | PC3 | TMS | 4 |
 | 20 | GND | GND | 7 |
 
-or you can read it like this, looking in front, ignoring the first top 4, then looking to the ones in the left you have in the order
+Use approximately 15 cm direct jumpers and one common ground. Do not connect
+power between the boards.
 
-TDI
-TDO
-TCK
-TMS
-VCC
+Production settings:
 
-all on the right are GND
-
-
-Connect the grounds, but do **not** connect power between the Raspberry Pi and
-the EBAZ4205. In particular, TMS is Raspberry Pi physical pin 24 (GPIO8), not
-physical pin 22 (GPIO25).
+- Adapter: `bananapi-m2-zero-mmio`
+- Safe default: 1000 kHz
+- Rate ladder: `1000,500,250,100`
+- Zynq TAP IDs: PL `0x13722093`, ARM `0x4ba00477`
+- Qualification: 20/20 full uploads passed at 1000 kHz
+- 2000 kHz is outside the reliable range; it failed with `PCFG_DONE=0`
 
 ## Build and upload
 
-From this directory:
-
 ```sh
-make                 # compile build/hello.elf
-make probe           # verify the adapter and Zynq JTAG chain
-make upload-full     # after an EBAZ4205 reset or power cycle
-make upload          # later fast ELF-only uploads
-make upload UART=1   # upload and capture the detected FT232 UART
-make bitstream       # upload only hardware/ebaz_test.bit
-make clean
+make
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make probe
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload-full UART=1
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload
 ```
 
-On macOS, connect the Sipeed RV CMSIS-DAP and FT232 adapter directly to the
-Mac. The scripts automatically use Homebrew OpenOCD, the CMSIS-DAP probe, and
-the first `/dev/cu.usbserial-*` device. Override them when needed:
+Use `upload-full` after every reset or power cycle. Later `upload` commands skip
+an unchanged bitstream and transfer only the ELF.
+
+Install the Banana Pi helper binaries after building patched OpenOCD in
+`~/openocd-ebaz`:
 
 ```sh
-EBAZ_OPENOCD=/path/to/openocd make upload-full
-EBAZ_CMSIS_DAP_SERIAL=012345ABCDEF make upload-full
-EBAZ_UART_DEVICE=/dev/cu.usbserial-A5069RR4 make upload UART=1
-make upload-full \
-    UPLOAD_ELF=/path/to/application.elf \
-    UPLOAD_BITSTREAM=/path/to/design.bit
+./jtag/build-mmio-jtag
+sudo ./jtag/install-mmio-runner
 ```
 
-Install OpenOCD on macOS with `brew install open-ocd`. No `sudo` is used on
-macOS.
+The installer places root-owned runners in `/usr/local/libexec`. Upload logs go
+to `jtag/logs/`. Success requires DEVCFG checks, released PL resets, ELF verify,
+and UART heartbeat—not LEDs or process exit alone.
 
-The upload scripts find the ELF and bitstream from this layout automatically.
-UART capture is disabled by default, so uploads do not open the serial device.
-Pass `UART=1` to either upload Make target when a UART log is wanted. You may
-still pass explicit files directly to `jtag/upload-code` when needed. See
-`jtag/README.md` for wiring, UART, and diagnostic details.
+## Other adapters
 
-Successful PL verification is recorded by bitstream hash. Later `make upload`
-runs skip the bitstream when its hash is unchanged, even though OpenOCD is
-stopped between commands. After a board reset or power cycle, use
-`make upload-full`; the host cannot infer that volatile FPGA configuration was
-lost.
+macOS defaults to CMSIS-DAP. Linux GPIO remains the correctness fallback:
 
-## Updating the Vivado platform
+```sh
+make probe
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-gpio make probe
+```
 
-After modifying the existing Vivado design, generate the bitstream and export
-an XSA that includes it. For example, in the Vivado Tcl console:
+See [jtag/README.md](jtag/README.md) for adapter setup, UART, rate fallback,
+stress results, recovery, and diagnostic details.
+
+## Project layout
+
+- `app/` — C application, startup assembly, linker script
+- `hardware/` — matching `.bit` and `.xsa`
+- `jtag/` — adapters, OpenOCD configuration, upload tools, logs
+- `tools/` — platform maintenance helpers
+- `build/` — generated ELF, objects, and map files
+
+## Update the hardware export
+
+Export an XSA containing the bitstream, then import both artifacts together:
 
 ```tcl
-write_hw_platform -fixed -include_bit -force \
-    -file /tmp/ebaz_test.xsa
+write_hw_platform -fixed -include_bit -force -file /tmp/ebaz_test.xsa
 ```
-
-Import that export with one command from this project directory:
 
 ```sh
 make platform XSA=/tmp/ebaz_test.xsa
 ```
 
-The importer validates that the XSA contains exactly one bitstream and one
-`ps7_init.tcl`, then updates these matching files together:
-
-- `hardware/ebaz_test.xsa`
-- `hardware/ebaz_test.bit`
-- `jtag/xsa/ps7_init.tcl`
-
-It reports which files actually changed. If only the PL bitstream changed, use
-`make upload`; the upload script detects the new bitstream hash and transfers
-the bitstream plus ELF. If PS initialization changed, the importer records that
-a full initialization is required. A normal `make upload` is then blocked:
-power-cycle the board and use `make upload-full`. The requirement is cleared
-only after a successful full upload.
-
-This command imports an already-exported XSA. It does **not** run Vivado, use
-Vitis, generate a BSP or `xparameters.h`, modify or preserve the block design,
-assign AXI addresses, or update peripheral base addresses in `app/hello.c`.
-Keep the editable Vivado project and any custom IP as the hardware source of
-truth—preferably under `hardware/vivado/` if you want everything in this project
-tree. An XSA is a deployment export, not a complete replacement for that
-project.
+If PS initialization changed, power-cycle the EBAZ4205 and run
+`make upload-full`. The editable Vivado project remains the hardware source of
+truth; an XSA is only a deployment export.
