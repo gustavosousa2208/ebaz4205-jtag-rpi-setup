@@ -149,12 +149,12 @@ for run in $(seq 1 20); do
 done
 ```
 
-Use short direct TCK/TMS/TDI/TDO jumpers and exactly one common ground between
-Banana header 20 and EBAZ J8-7. The tested cable length still needs to be
-recorded before treating these electrical results as transferable to another
-harness. Do not infer success from LEDs: require all register, ELF, and UART
-checks listed above. After any failed high-rate experiment, rerun a full upload
-at 1000 kHz; the failure path invalidates the cached PL-verification marker.
+The verified harness used approximately 15 cm direct TCK/TMS/TDI/TDO jumpers
+and exactly one common ground between Banana header 20 and EBAZ J8-7. Treat
+longer wiring as unqualified until it passes the same stress procedure. Do not
+infer success from LEDs: require all register, ELF, and UART checks listed
+above. After any failed high-rate experiment, rerun a full upload at 1000 kHz;
+the failure path invalidates the cached PL-verification marker.
 
 The visible green EBAZ LEDs are user PL outputs, not a guaranteed configuration
 DONE indicator. They turn on only when the loaded design drives their FPGA pins.
