@@ -105,6 +105,24 @@ rate from 100, 250, 500, 1000, 2000, and 5000 kHz. Effective rates were 100,
 250, 500, 998, 1185, and 1187 kHz respectively. Use 1000 kHz as the initial
 conservative rate; requests above 1 MHz currently saturate around 1.19 MHz.
 
+The production Banana Pi path is `bananapi-m2-zero-mmio`. Build the patched
+OpenOCD tree as `~/openocd-ebaz`, build the scanner, and install both root-owned
+binaries plus the narrow passwordless runner rule:
+
+```sh
+./jtag/build-mmio-jtag
+sudo ./jtag/install-mmio-runner
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make probe
+```
+
+PL uploads default to a `1000,500,250,100` kHz rate ladder. Override it with
+`EBAZ_JTAG_RATE_LADDER`; `EBAZ_PLD_RETRIES` remains the maximum number of full
+attempts. Only transport and configuration failures advance to the next rate.
+Each attempt logs its backend, requested rate, measured effective rate, failure
+category, DEVCFG result, and elapsed time. `EBAZ_TEST_FAIL_PL_ATTEMPT=1` injects
+a transport failure before touching PL state and is intended only for testing
+fallback and exhausted-ladder handling.
+
 The visible green EBAZ LEDs are user PL outputs, not a guaranteed configuration
 DONE indicator. They turn on only when the loaded design drives their FPGA pins.
 

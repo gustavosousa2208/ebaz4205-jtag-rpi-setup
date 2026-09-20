@@ -12,6 +12,8 @@ capture_uart=false
 keep_openocd=false
 uart_seconds=${EBAZ_UART_SECONDS:-3}
 pld_retries=${EBAZ_PLD_RETRIES:-3}
+jtag_rate_ladder=${EBAZ_JTAG_RATE_LADDER:-1000,500,250,100}
+test_fail_pl_attempt=${EBAZ_TEST_FAIL_PL_ATTEMPT:-}
 upload_timeout_seconds=${EBAZ_UPLOAD_TIMEOUT_SECONDS:-300}
 if ! [[ "$pld_retries" =~ ^[0-9]+$ ]] || [ "$pld_retries" -lt 1 ]; then
     echo "EBAZ_PLD_RETRIES must be a positive integer." >&2
@@ -22,6 +24,16 @@ if ! [[ "$upload_timeout_seconds" =~ ^[0-9]+$ ]] || [ "$upload_timeout_seconds" 
     exit 2
 fi
 EBAZ_PLD_RETRIES=$pld_retries
+if ! [[ "$jtag_rate_ladder" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+    echo "EBAZ_JTAG_RATE_LADDER must be comma-separated positive integers." >&2
+    exit 2
+fi
+if [ -n "$test_fail_pl_attempt" ] && { ! [[ "$test_fail_pl_attempt" =~ ^[0-9]+$ ]] || [ "$test_fail_pl_attempt" -lt 1 ]; }; then
+    echo "EBAZ_TEST_FAIL_PL_ATTEMPT must be empty or a positive integer." >&2
+    exit 2
+fi
+EBAZ_JTAG_RATE_LADDER=$jtag_rate_ladder
+EBAZ_TEST_FAIL_PL_ATTEMPT=$test_fail_pl_attempt
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --full)
@@ -152,6 +164,7 @@ export EBAZ_UPLOAD_CFG EBAZ_LOAD_BITSTREAM EBAZ_SUCCESS_MARKER EBAZ_PLD_DEVICE
 export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL EBAZ_OPENOCD
 export EBAZ_OPENOCD_SCRIPTS EBAZ_USE_SUDO
 export EBAZ_PLD_RETRIES
+export EBAZ_JTAG_RATE_LADDER EBAZ_TEST_FAIL_PL_ATTEMPT EBAZ_JTAG_ADAPTER
 
 timestamp=$(date '+%Y%m%d-%H%M%S')
 log_file="$log_dir/${timestamp}-code.log"
@@ -172,6 +185,8 @@ uart_log="$log_dir/${timestamp}-uart.log"
     echo "requested_bitstream_sha256=$requested_bitstream_hash"
     echo "programmed_bitstream_sha256=${programmed_bitstream_hash:-unknown}"
     echo "pld_retries=$pld_retries"
+    echo "jtag_rate_ladder_khz=$jtag_rate_ladder"
+    echo "test_fail_pl_attempt=${test_fail_pl_attempt:-disabled}"
     echo "upload_timeout_seconds=$upload_timeout_seconds"
     ebaz_sha256_report "$EBAZ_ELF"
     ebaz_sha256_report "$EBAZ_BITSTREAM"
@@ -222,7 +237,7 @@ else
 fi
 
 if [ "$EBAZ_USE_SUDO" = 1 ]; then
-    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_SUCCESS_MARKER,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO,EBAZ_PLD_RETRIES \
+    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_SUCCESS_MARKER,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO,EBAZ_PLD_RETRIES,EBAZ_JTAG_RATE_LADDER,EBAZ_TEST_FAIL_PL_ATTEMPT,EBAZ_JTAG_ADAPTER \
         "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
 else
     nohup "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 </dev/null &

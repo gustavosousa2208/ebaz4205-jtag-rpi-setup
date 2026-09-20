@@ -1,18 +1,19 @@
 diff --git a/src/jtag/drivers/linuxgpiod.c b/src/jtag/drivers/linuxgpiod.c
-index cc738e9..4b0840e 100644
+index cc738e9..24406fd 100644
 --- a/src/jtag/drivers/linuxgpiod.c
 +++ b/src/jtag/drivers/linuxgpiod.c
-@@ -14,6 +14,9 @@
+@@ -14,6 +14,10 @@
  #endif
  
  #include <gpiod.h>
 +#include <fcntl.h>
 +#include <sys/mman.h>
++#include <time.h>
 +#include <unistd.h>
  #include <jtag/adapter.h>
  #include <jtag/interface.h>
  #include <transport/transport.h>
-@@ -299,6 +302,61 @@ static bool swdio_input;
+@@ -299,6 +303,125 @@ static bool swdio_input;
  
  static const struct adapter_gpio_config *adapter_gpio_config;
  
@@ -27,16 +28,79 @@ index cc738e9..4b0840e 100644
 +static uint32_t ebaz_saved_cfg0;
 +static uint32_t ebaz_saved_dat;
 +static bool ebaz_mmio_requested;
++static unsigned int ebaz_requested_khz = 1000;
++static uint64_t ebaz_half_period_ns = 500;
++static uint64_t ebaz_next_edge_ns;
++static uint64_t ebaz_rate_started_ns;
++static uint64_t ebaz_rising_edges;
++
++static uint64_t ebaz_monotonic_ns(void)
++{
++	struct timespec ts;
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
++}
++
++static bool ebaz_mmio_executable(void)
++{
++	const char *enabled = getenv("EBAZ_ALLWINNER_MMIO");
++	if (enabled && !strcmp(enabled, "1"))
++		return true;
++
++	char executable[256] = { 0 };
++	ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
++	return length >= 0 && strstr(executable, "openocd-ebaz-mmio");
++}
++
++static void ebaz_rate_report(void)
++{
++	if (!ebaz_rate_started_ns || !ebaz_rising_edges)
++		return;
++	uint64_t elapsed_ns = ebaz_monotonic_ns() - ebaz_rate_started_ns;
++	uint64_t effective_hz = elapsed_ns ? ebaz_rising_edges * 1000000000u / elapsed_ns : 0;
++	LOG_INFO("EBAZ MMIO rate result: requested_khz=%u effective_khz=%" PRIu64
++		" rising_edges=%" PRIu64 " elapsed_ms=%.3f", ebaz_requested_khz,
++		effective_hz / 1000u, ebaz_rising_edges, elapsed_ns / 1000000.0);
++}
++
++static int ebaz_khz(int khz, int *speed)
++{
++	if (khz <= 0)
++		return ERROR_FAIL;
++	*speed = khz;
++	return ERROR_OK;
++}
++
++static int ebaz_speed_div(int speed, int *khz)
++{
++	*khz = speed;
++	return ERROR_OK;
++}
++
++static int ebaz_speed(int speed)
++{
++	if (speed <= 0)
++		return ERROR_FAIL;
++	if (!ebaz_mmio_executable())
++		return ERROR_OK;
++
++	if (ebaz_mmio_requested)
++		ebaz_rate_report();
++	ebaz_requested_khz = speed;
++	ebaz_half_period_ns = 500000u / (unsigned int)speed;
++	if (!ebaz_half_period_ns)
++		ebaz_half_period_ns = 1;
++	ebaz_next_edge_ns = 0;
++	ebaz_rate_started_ns = 0;
++	ebaz_rising_edges = 0;
++	LOG_INFO("EBAZ MMIO rate selected: requested_khz=%u", ebaz_requested_khz);
++	return ERROR_OK;
++}
 +
 +static int ebaz_mmio_prepare(void)
 +{
-+	const char *enabled = getenv("EBAZ_ALLWINNER_MMIO");
-+	if (!enabled || strcmp(enabled, "1")) {
-+		char executable[256] = { 0 };
-+		ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
-+		if (length < 0 || !strstr(executable, "openocd-ebaz-mmio"))
-+			return ERROR_OK;
-+	}
++	if (!ebaz_mmio_executable())
++		return ERROR_OK;
 +
 +	int fd = open("/dev/mem", O_RDWR | O_SYNC);
 +	if (fd < 0) {
@@ -60,6 +124,7 @@ index cc738e9..4b0840e 100644
 +{
 +	if (!ebaz_mmio_requested)
 +		return;
++	ebaz_rate_report();
 +	ebaz_pio[EBAZ_PC_DAT_OFF / 4] =
 +		(ebaz_pio[EBAZ_PC_DAT_OFF / 4] & ~EBAZ_PC_JTAG_MASK) |
 +		(ebaz_saved_dat & EBAZ_PC_JTAG_MASK);
@@ -74,7 +139,7 @@ index cc738e9..4b0840e 100644
  /* Helper to get/set a single line */
  static int linuxgpiod_line_get_value(enum adapter_gpio_config_index idx)
  {
-@@ -328,6 +386,9 @@ static bool is_gpio_config_valid(enum adapter_gpio_config_index idx)
+@@ -328,6 +451,9 @@ static bool is_gpio_config_valid(enum adapter_gpio_config_index idx)
  /* Bitbang interface read of TDO */
  static enum bb_value linuxgpiod_read(void)
  {
@@ -84,24 +149,35 @@ index cc738e9..4b0840e 100644
  	int retval;
  
  	retval = linuxgpiod_line_get_value(ADAPTER_GPIO_IDX_TDO);
-@@ -347,6 +408,16 @@ static enum bb_value linuxgpiod_read(void)
+@@ -347,6 +473,27 @@ static enum bb_value linuxgpiod_read(void)
   */
  static int linuxgpiod_write(int tck, int tms, int tdi)
  {
 +	if (ebaz_mmio_requested) {
++		uint64_t now = ebaz_monotonic_ns();
++		if (ebaz_next_edge_ns) {
++			while (now < ebaz_next_edge_ns)
++				now = ebaz_monotonic_ns();
++		} else {
++			ebaz_rate_started_ns = now;
++		}
++		ebaz_next_edge_ns = now + ebaz_half_period_ns;
++
 +		uint32_t value = ebaz_pio[EBAZ_PC_DAT_OFF / 4] & ~EBAZ_PC_OUTPUT_MASK;
 +		value |= (uint32_t)(tdi & 1) << 0;
 +		value |= (uint32_t)(tck & 1) << 2;
 +		value |= (uint32_t)(tms & 1) << 3;
 +		ebaz_pio[EBAZ_PC_DAT_OFF / 4] = value;
 +		__sync_synchronize();
++		if (tck)
++			ebaz_rising_edges++;
 +		return ERROR_OK;
 +	}
 +
  	static int last_tck;
  	static int last_tms;
  	static int last_tdi;
-@@ -585,6 +656,7 @@ static int linuxgpiod_quit(void)
+@@ -585,6 +732,7 @@ static int linuxgpiod_quit(void)
  	LOG_DEBUG("linuxgpiod_quit");
  	for (int i = 0; i < ADAPTER_GPIO_IDX_NUM; ++i)
  		helper_release(i);
@@ -109,7 +185,7 @@ index cc738e9..4b0840e 100644
  
  	return ERROR_OK;
  }
-@@ -701,6 +773,8 @@ static int linuxgpiod_init(void)
+@@ -701,6 +849,8 @@ static int linuxgpiod_init(void)
  
  	bitbang_interface = &linuxgpiod_bitbang;
  	adapter_gpio_config = adapter_gpio_get_config();
@@ -118,7 +194,7 @@ index cc738e9..4b0840e 100644
  
  	/*
  	 * Configure JTAG/SWD signals. Default directions and initial states are handled
-@@ -752,6 +826,17 @@ static int linuxgpiod_init(void)
+@@ -752,6 +902,17 @@ static int linuxgpiod_init(void)
  			|| helper_get_line(ADAPTER_GPIO_IDX_LED) != ERROR_OK)
  		goto out_error;
  
@@ -136,4 +212,13 @@ index cc738e9..4b0840e 100644
  	return ERROR_OK;
  
  out_error:
-
+@@ -773,6 +934,9 @@ struct adapter_driver linuxgpiod_adapter_driver = {
+ 	.init = linuxgpiod_init,
+ 	.quit = linuxgpiod_quit,
+ 	.reset = linuxgpiod_reset,
++	.speed = ebaz_speed,
++	.khz = ebaz_khz,
++	.speed_div = ebaz_speed_div,
+ 
+ 	.jtag_ops = &linuxgpiod_interface,
+ 	.swd_ops = &bitbang_swd,

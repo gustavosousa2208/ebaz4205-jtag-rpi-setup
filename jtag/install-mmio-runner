@@ -9,7 +9,6 @@ fi
 source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 source_binary="$source_dir/mmio-jtag-idcode"
 installed_binary=/usr/local/libexec/ebaz-mmio-jtag-idcode
-openocd_source="$source_dir/../openocd-ebaz/src/openocd"
 openocd_binary=/usr/local/libexec/openocd-ebaz-mmio
 sudoers_file=/etc/sudoers.d/ebaz-mmio-jtag
 runner_user=${SUDO_USER:-}
@@ -21,6 +20,12 @@ case "$runner_user" in
         ;;
 esac
 
+runner_home=$(getent passwd "$runner_user" | cut -d: -f6)
+openocd_source="$source_dir/../openocd-ebaz/src/openocd"
+if [ ! -x "$openocd_source" ] && [ -n "$runner_home" ]; then
+    openocd_source="$runner_home/openocd-ebaz/src/openocd"
+fi
+
 if [ ! -x "$source_binary" ]; then
     echo "Build $source_binary first with $source_dir/build-mmio-jtag" >&2
     exit 2
@@ -30,6 +35,9 @@ install -d -o root -g root -m 0755 /usr/local/libexec
 install -o root -g root -m 0755 "$source_binary" "$installed_binary"
 if [ -x "$openocd_source" ]; then
     install -o root -g root -m 0755 "$openocd_source" "$openocd_binary"
+else
+    echo "OpenOCD build not found; checked project sibling and $runner_home/openocd-ebaz." >&2
+    exit 2
 fi
 
 candidate=$(mktemp /tmp/ebaz-mmio-sudoers.XXXXXX)

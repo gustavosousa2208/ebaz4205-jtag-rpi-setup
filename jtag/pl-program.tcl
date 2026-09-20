@@ -78,28 +78,79 @@ proc ebaz_verify_post_config {} {
     }
 }
 
+proc ebaz_failure_category {message} {
+    set lower [string tolower $message]
+    if {[regexp {no such file|not found|permission denied|invalid bitstream|must be} $lower]} {
+        return input
+    }
+    if {[regexp {jtag|scan chain|ir capture|communication|target.*not|transport} $lower]} {
+        return transport
+    }
+    return configuration
+}
+
+proc ebaz_rate_ladder {} {
+    set rates [split $::env(EBAZ_JTAG_RATE_LADDER) ,]
+    if {[llength $rates] == 0} {
+        error "EBAZ_JTAG_RATE_LADDER must contain at least one rate"
+    }
+    foreach rate $rates {
+        if {![string is integer -strict $rate] || $rate < 1} {
+            error "EBAZ_JTAG_RATE_LADDER must be comma-separated positive integers, got '$::env(EBAZ_JTAG_RATE_LADDER)'"
+        }
+    }
+    return $rates
+}
+
 proc ebaz_program_pl {bitstream} {
     set retry_limit $::env(EBAZ_PLD_RETRIES)
     if {![string is integer -strict $retry_limit] || $retry_limit < 1} {
         error "EBAZ_PLD_RETRIES must be a positive integer, got '$retry_limit'"
     }
 
-    for {set attempt 1} {$attempt <= $retry_limit} {incr attempt} {
-        echo [format "PL programming attempt %d/%d..." $attempt $retry_limit]
+    set rates [ebaz_rate_ladder]
+    set available [llength $rates]
+    set attempt_limit [expr {$retry_limit < $available ? $retry_limit : $available}]
+    set forced_attempt $::env(EBAZ_TEST_FAIL_PL_ATTEMPT)
+    if {$forced_attempt ne "" && (![string is integer -strict $forced_attempt] || $forced_attempt < 1)} {
+        error "EBAZ_TEST_FAIL_PL_ATTEMPT must be empty or a positive integer, got '$forced_attempt'"
+    }
+
+    for {set attempt 1} {$attempt <= $attempt_limit} {incr attempt} {
+        set rate [lindex $rates [expr {$attempt - 1}]]
+        adapter speed $rate
+        set started [clock milliseconds]
+        echo [format "PL attempt=%d/%d backend=%s requested_khz=%d" \
+            $attempt $attempt_limit $::env(EBAZ_JTAG_ADAPTER) $rate]
         set result [catch {
+            if {$forced_attempt ne "" && $attempt == $forced_attempt} {
+                error "simulated JTAG transport failure for fallback validation"
+            }
             ebaz_prepare_pl
             echo "Programming the FPGA bitstream..."
             pld load $::env(EBAZ_PLD_DEVICE) $bitstream
             ebaz_verify_pl
+            ps7_post_config
+            ebaz_verify_post_config
         } failure]
+        set elapsed [expr {[clock milliseconds] - $started}]
         if {!$result} {
-            echo [format "PL configuration verified on attempt %d/%d." $attempt $retry_limit]
+            echo [format "PL attempt=%d result=pass category=none requested_khz=%d elapsed_ms=%d" \
+                $attempt $rate $elapsed]
             return
         }
-        echo [format "PL attempt %d/%d failed: %s" $attempt $retry_limit $failure]
-        if {$attempt == $retry_limit} {
-            error [format "PL configuration failed after %d attempts: %s" $retry_limit $failure]
+        set category [ebaz_failure_category $failure]
+        echo [format "PL attempt=%d result=fail category=%s requested_khz=%d elapsed_ms=%d error=%s" \
+            $attempt $category $rate $elapsed $failure]
+        if {$category ni {transport configuration}} {
+            error [format "PL programming stopped on non-retryable %s failure: %s" $category $failure]
         }
+        if {$attempt == $attempt_limit} {
+            error [format "PL rate ladder exhausted after %d attempt(s); last_category=%s last_rate_khz=%d: %s" \
+                $attempt_limit $category $rate $failure]
+        }
+        echo [format "PL fallback: category=%s next_requested_khz=%d" \
+            $category [lindex $rates $attempt]]
     }
 }
 
