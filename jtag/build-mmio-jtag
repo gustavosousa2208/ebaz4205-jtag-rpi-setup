@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+bundle_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cc=${CC:-gcc}
+
+"$cc" -std=c11 -O2 -Wall -Wextra -Werror \
+    "$bundle_dir/mmio-jtag-idcode.c" -o "$bundle_dir/mmio-jtag-idcode"

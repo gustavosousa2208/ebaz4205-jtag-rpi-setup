@@ -1,0 +1,139 @@
+diff --git a/src/jtag/drivers/linuxgpiod.c b/src/jtag/drivers/linuxgpiod.c
+index cc738e9..4b0840e 100644
+--- a/src/jtag/drivers/linuxgpiod.c
++++ b/src/jtag/drivers/linuxgpiod.c
+@@ -14,6 +14,9 @@
+ #endif
+ 
+ #include <gpiod.h>
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
+ #include <jtag/adapter.h>
+ #include <jtag/interface.h>
+ #include <transport/transport.h>
+@@ -299,6 +302,61 @@ static bool swdio_input;
+ 
+ static const struct adapter_gpio_config *adapter_gpio_config;
+ 
++#define EBAZ_PIO_PAGE_BASE 0x01c20000u
++#define EBAZ_PIO_PAGE_SIZE 0x1000u
++#define EBAZ_PC_CFG0_OFF   0x848u
++#define EBAZ_PC_DAT_OFF    0x858u
++#define EBAZ_PC_JTAG_MASK  0x0fu
++#define EBAZ_PC_OUTPUT_MASK 0x0du
++
++static volatile uint32_t *ebaz_pio = MAP_FAILED;
++static uint32_t ebaz_saved_cfg0;
++static uint32_t ebaz_saved_dat;
++static bool ebaz_mmio_requested;
++
++static int ebaz_mmio_prepare(void)
++{
++	const char *enabled = getenv("EBAZ_ALLWINNER_MMIO");
++	if (!enabled || strcmp(enabled, "1")) {
++		char executable[256] = { 0 };
++		ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
++		if (length < 0 || !strstr(executable, "openocd-ebaz-mmio"))
++			return ERROR_OK;
++	}
++
++	int fd = open("/dev/mem", O_RDWR | O_SYNC);
++	if (fd < 0) {
++		LOG_ERROR("EBAZ MMIO: open /dev/mem: %s", strerror(errno));
++		return ERROR_JTAG_INIT_FAILED;
++	}
++	ebaz_pio = mmap(NULL, EBAZ_PIO_PAGE_SIZE, PROT_READ | PROT_WRITE,
++		MAP_SHARED, fd, EBAZ_PIO_PAGE_BASE);
++	close(fd);
++	if (ebaz_pio == MAP_FAILED) {
++		LOG_ERROR("EBAZ MMIO: mmap PIO: %s", strerror(errno));
++		return ERROR_JTAG_INIT_FAILED;
++	}
++	ebaz_saved_cfg0 = ebaz_pio[EBAZ_PC_CFG0_OFF / 4];
++	ebaz_saved_dat = ebaz_pio[EBAZ_PC_DAT_OFF / 4];
++	ebaz_mmio_requested = true;
++	return ERROR_OK;
++}
++
++static void ebaz_mmio_restore(void)
++{
++	if (!ebaz_mmio_requested)
++		return;
++	ebaz_pio[EBAZ_PC_DAT_OFF / 4] =
++		(ebaz_pio[EBAZ_PC_DAT_OFF / 4] & ~EBAZ_PC_JTAG_MASK) |
++		(ebaz_saved_dat & EBAZ_PC_JTAG_MASK);
++	__sync_synchronize();
++	ebaz_pio[EBAZ_PC_CFG0_OFF / 4] = ebaz_saved_cfg0;
++	__sync_synchronize();
++	munmap((void *)ebaz_pio, EBAZ_PIO_PAGE_SIZE);
++	ebaz_pio = MAP_FAILED;
++	ebaz_mmio_requested = false;
++}
++
+ /* Helper to get/set a single line */
+ static int linuxgpiod_line_get_value(enum adapter_gpio_config_index idx)
+ {
+@@ -328,6 +386,9 @@ static bool is_gpio_config_valid(enum adapter_gpio_config_index idx)
+ /* Bitbang interface read of TDO */
+ static enum bb_value linuxgpiod_read(void)
+ {
++	if (ebaz_mmio_requested)
++		return (ebaz_pio[EBAZ_PC_DAT_OFF / 4] & (1u << 1)) ? BB_HIGH : BB_LOW;
++
+ 	int retval;
+ 
+ 	retval = linuxgpiod_line_get_value(ADAPTER_GPIO_IDX_TDO);
+@@ -347,6 +408,16 @@ static enum bb_value linuxgpiod_read(void)
+  */
+ static int linuxgpiod_write(int tck, int tms, int tdi)
+ {
++	if (ebaz_mmio_requested) {
++		uint32_t value = ebaz_pio[EBAZ_PC_DAT_OFF / 4] & ~EBAZ_PC_OUTPUT_MASK;
++		value |= (uint32_t)(tdi & 1) << 0;
++		value |= (uint32_t)(tck & 1) << 2;
++		value |= (uint32_t)(tms & 1) << 3;
++		ebaz_pio[EBAZ_PC_DAT_OFF / 4] = value;
++		__sync_synchronize();
++		return ERROR_OK;
++	}
++
+ 	static int last_tck;
+ 	static int last_tms;
+ 	static int last_tdi;
+@@ -585,6 +656,7 @@ static int linuxgpiod_quit(void)
+ 	LOG_DEBUG("linuxgpiod_quit");
+ 	for (int i = 0; i < ADAPTER_GPIO_IDX_NUM; ++i)
+ 		helper_release(i);
++	ebaz_mmio_restore();
+ 
+ 	return ERROR_OK;
+ }
+@@ -701,6 +773,8 @@ static int linuxgpiod_init(void)
+ 
+ 	bitbang_interface = &linuxgpiod_bitbang;
+ 	adapter_gpio_config = adapter_gpio_get_config();
++	if (ebaz_mmio_prepare() != ERROR_OK)
++		return ERROR_JTAG_INIT_FAILED;
+ 
+ 	/*
+ 	 * Configure JTAG/SWD signals. Default directions and initial states are handled
+@@ -752,6 +826,17 @@ static int linuxgpiod_init(void)
+ 			|| helper_get_line(ADAPTER_GPIO_IDX_LED) != ERROR_OK)
+ 		goto out_error;
+ 
++	if (ebaz_mmio_requested) {
++		uint32_t cfg = ebaz_pio[EBAZ_PC_CFG0_OFF / 4];
++		cfg &= ~0xffffu;
++		cfg |= 1u << 0;
++		cfg |= 1u << 8;
++		cfg |= 1u << 12;
++		ebaz_pio[EBAZ_PC_CFG0_OFF / 4] = cfg;
++		__sync_synchronize();
++		LOG_INFO("EBAZ Allwinner Port-C MMIO acceleration enabled");
++	}
++
+ 	return ERROR_OK;
+ 
+ out_error:
+

@@ -45,9 +45,65 @@ Probe the adapter and both Zynq JTAG TAPs without programming:
 
 Do not connect power between the Pi and EBAZ4205.
 
-At the configured 1 MHz GPIO-JTAG rate, the 2.08 MB test bitstream takes about
-17 seconds. This is expected: its roughly 16.7 million bits already require a
-theoretical minimum of 16.7 seconds, before protocol overhead.
+## Banana Pi M2 Zero GPIO wiring
+
+Install `openocd` and `gcc-arm-none-eabi` on the Banana Pi, then select its
+native Linux GPIO adapter:
+
+```sh
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-gpio make probe
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-gpio make upload-full
+```
+
+The same 40-pin header *positions* as the Raspberry Pi layout are used. On
+the Banana Pi M2 Zero, connect header 23 to EBAZ J8-6 (TCK), 24 to J8-4
+(TMS), 19 to J8-10 (TDI), 21 to J8-8 (TDO), and 20 to J8-7 (GND). Do not
+connect power between the boards. The linuxgpiod and sysfsgpio backends do not
+provide configurable clock speed; their `adapter speed` value does not change
+the effective rate. Keep this backend as the correctness baseline while the
+SPI0 transport is developed.
+
+For the EBAZ's UART heartbeat, enable the Banana Pi's `uart3` Armbian overlay
+and reboot. It appears as `/dev/ttyS3` at 115200 baud. Connect Banana header
+10 (UART RX) to EBAZ J7-2 (TX), and Banana header 6 (GND) to EBAZ J7-1 (GND).
+Header 8 (UART TX) is unused by the current transmit-only application.
+
+The verified Banana Pi baseline is a 2,083,870-byte bitstream plus ELF and
+10-second UART capture in 88.974 seconds; ELF-only upload is 5.055 seconds.
+The two verified Zynq TAP IDs are PL `0x13722093` and ARM `0x4ba00477`.
+These timings were measured with the bundled linuxgpiod backend, whose
+effective clock cannot be selected through OpenOCD.
+
+The next high-speed transport uses SPI0 for TDI/TDO/TCK and keeps PC3 as the
+GPIO TMS line. Do not enable Armbian's stock `spi-spidev` overlay for this
+wiring: it claims PC3 as SPI chip-select. Use
+`adapters/bananapi-m2-zero-spi-tms-overlay.dts`, which enables SPI0 with a
+three-pin pinmux; the transport must open the resulting spidev device with
+`SPI_NO_CS` and drive TMS through GPIO.
+
+On the reference Pi (`192.168.18.194`), the custom overlay has been staged and
+rebooted successfully: `/dev/spidev0.0` exists, SPI0 is enabled, and PC3 is
+still an unclaimed GPIO. The original boot configuration is backed up as
+`/boot/armbianEnv.txt.pre-semi-jtag-20260920`. Do not enable the stock
+`sun8i-h3-spi-spidev` overlay for this wiring.
+
+The stock spidev approach was subsequently rejected for generic JTAG. The
+H2+/H3 `spi-sun6i` driver exposes only 8-bit words, while JTAG requires TMS to
+change on an exact, potentially non-byte-aligned final scan bit. Extra padding
+clocks are not safe because they change TAP state or the selected instruction.
+
+The working fallback is `mmio-jtag-idcode.c`, which requests PC0-PC3 through
+the GPIO character device before using a bounded `/dev/mem` mapping of the PIO
+register page. The GPIO request is required after a cold boot; directly
+changing the mux registers without it produced an all-zero TDO stream. Build
+it on the Banana Pi with `jtag/build-mmio-jtag`. The proof restores the saved
+Port C mux/data bits on exit and validates both Zynq IDCODEs without programming
+the FPGA.
+
+On the reference board, a fresh-boot test passed 20/20 scans at every requested
+rate from 100, 250, 500, 1000, 2000, and 5000 kHz. Effective rates were 100,
+250, 500, 998, 1185, and 1187 kHz respectively. Use 1000 kHz as the initial
+conservative rate; requests above 1 MHz currently saturate around 1.19 MHz.
 
 The visible green EBAZ LEDs are user PL outputs, not a guaranteed configuration
 DONE indicator. They turn on only when the loaded design drives their FPGA pins.

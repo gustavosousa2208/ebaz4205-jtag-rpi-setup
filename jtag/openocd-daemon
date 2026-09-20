@@ -7,8 +7,26 @@ ebaz_init_host
 
 echo "$$" >"$EBAZ_PIDFILE"
 upload_cfg=${EBAZ_UPLOAD_CFG:-$EBAZ_BUNDLE_DIR/upload-code.cfg}
-exec "$EBAZ_OPENOCD" \
-    -s "$EBAZ_OPENOCD_SCRIPTS" \
-    -f "$EBAZ_ADAPTER_CFG" \
-    -f "$EBAZ_BUNDLE_DIR/ebaz4205.cfg" \
-    -f "$upload_cfg"
+if [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; then
+    exec sudo -n "$EBAZ_OPENOCD" \
+        -c "set ::env(EBAZ_BUNDLE_DIR) {$EBAZ_BUNDLE_DIR}" \
+        -c "set ::env(EBAZ_ELF) {$EBAZ_ELF}" \
+        -c "set ::env(EBAZ_BITSTREAM) {$EBAZ_BITSTREAM}" \
+        -c "set ::env(EBAZ_ENTRY) {$EBAZ_ENTRY}" \
+        -c "set ::env(EBAZ_PIDFILE) {$EBAZ_PIDFILE}" \
+        -c "set ::env(EBAZ_UPLOAD_CFG) {$EBAZ_UPLOAD_CFG}" \
+        -c "set ::env(EBAZ_LOAD_BITSTREAM) {$EBAZ_LOAD_BITSTREAM}" \
+        -c "set ::env(EBAZ_SUCCESS_MARKER) {$EBAZ_SUCCESS_MARKER}" \
+        -c "set ::env(EBAZ_PLD_DEVICE) {$EBAZ_PLD_DEVICE}" \
+        -c "set ::env(EBAZ_PLD_RETRIES) {$EBAZ_PLD_RETRIES}" \
+        -s "$EBAZ_OPENOCD_SCRIPTS" \
+        -f "$EBAZ_ADAPTER_CFG" \
+        -f "$EBAZ_BUNDLE_DIR/ebaz4205.cfg" \
+        -f "$upload_cfg"
+else
+    exec "$EBAZ_OPENOCD" \
+        -s "$EBAZ_OPENOCD_SCRIPTS" \
+        -f "$EBAZ_ADAPTER_CFG" \
+        -f "$EBAZ_BUNDLE_DIR/ebaz4205.cfg" \
+        -f "$upload_cfg"
+fi

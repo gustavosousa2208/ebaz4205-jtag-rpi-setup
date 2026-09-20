@@ -79,10 +79,28 @@ proc ebaz_verify_post_config {} {
 }
 
 proc ebaz_program_pl {bitstream} {
-    ebaz_prepare_pl
-    echo "Programming the FPGA bitstream..."
-    pld load $::env(EBAZ_PLD_DEVICE) $bitstream
-    ebaz_verify_pl
+    set retry_limit $::env(EBAZ_PLD_RETRIES)
+    if {![string is integer -strict $retry_limit] || $retry_limit < 1} {
+        error "EBAZ_PLD_RETRIES must be a positive integer, got '$retry_limit'"
+    }
+
+    for {set attempt 1} {$attempt <= $retry_limit} {incr attempt} {
+        echo [format "PL programming attempt %d/%d..." $attempt $retry_limit]
+        set result [catch {
+            ebaz_prepare_pl
+            echo "Programming the FPGA bitstream..."
+            pld load $::env(EBAZ_PLD_DEVICE) $bitstream
+            ebaz_verify_pl
+        } failure]
+        if {!$result} {
+            echo [format "PL configuration verified on attempt %d/%d." $attempt $retry_limit]
+            return
+        }
+        echo [format "PL attempt %d/%d failed: %s" $attempt $retry_limit $failure]
+        if {$attempt == $retry_limit} {
+            error [format "PL configuration failed after %d attempts: %s" $retry_limit $failure]
+        }
+    }
 }
 
 proc ebaz_mark_upload_success {} {

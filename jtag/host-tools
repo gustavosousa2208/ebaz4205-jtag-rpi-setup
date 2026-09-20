@@ -6,9 +6,12 @@ ebaz_init_host() {
     EBAZ_HOST_OS=$(uname -s)
 
     if [ -z "${EBAZ_OPENOCD:-}" ]; then
-        if [ "$EBAZ_HOST_OS" = Darwin ]; then
+        if [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ] &&
+           [ -x /usr/local/libexec/openocd-ebaz-mmio ]; then
+            EBAZ_OPENOCD=/usr/local/libexec/openocd-ebaz-mmio
+        elif [ "$EBAZ_HOST_OS" = Darwin ]; then
             EBAZ_OPENOCD=$(command -v openocd || true)
-        elif [ -x "$bundle_dir/bin/openocd" ]; then
+        elif [ -x "$bundle_dir/bin/openocd" ] && "$bundle_dir/bin/openocd" --version >/dev/null 2>&1; then
             EBAZ_OPENOCD="$bundle_dir/bin/openocd"
         else
             EBAZ_OPENOCD=$(command -v openocd || true)
@@ -42,7 +45,9 @@ ebaz_init_host() {
     fi
 
     if [ -z "${EBAZ_USE_SUDO:-}" ]; then
-        if [ "$EBAZ_HOST_OS" = Linux ]; then
+        if [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; then
+            EBAZ_USE_SUDO=0
+        elif [ "$EBAZ_HOST_OS" = Linux ]; then
             EBAZ_USE_SUDO=1
         else
             EBAZ_USE_SUDO=0
@@ -57,6 +62,10 @@ ebaz_init_host() {
                     break
                 fi
             done
+        elif { [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-gpio ] ||
+               [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; } &&
+             [ -e /dev/ttyS3 ]; then
+            EBAZ_UART_DEVICE=/dev/ttyS3
         elif [ -e /dev/ttyUSB0 ]; then
             EBAZ_UART_DEVICE=/dev/ttyUSB0
         fi

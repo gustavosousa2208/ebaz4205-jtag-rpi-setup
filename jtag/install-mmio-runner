@@ -1,0 +1,51 @@
+#!/bin/sh
+set -eu
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Run with sudo: sudo $0" >&2
+    exit 2
+fi
+
+source_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+source_binary="$source_dir/mmio-jtag-idcode"
+installed_binary=/usr/local/libexec/ebaz-mmio-jtag-idcode
+openocd_source="$source_dir/../openocd-ebaz/src/openocd"
+openocd_binary=/usr/local/libexec/openocd-ebaz-mmio
+sudoers_file=/etc/sudoers.d/ebaz-mmio-jtag
+runner_user=${SUDO_USER:-}
+
+case "$runner_user" in
+    ''|*[!A-Za-z0-9_.-]*)
+        echo "Cannot determine a safe invoking username from SUDO_USER." >&2
+        exit 2
+        ;;
+esac
+
+if [ ! -x "$source_binary" ]; then
+    echo "Build $source_binary first with $source_dir/build-mmio-jtag" >&2
+    exit 2
+fi
+
+install -d -o root -g root -m 0755 /usr/local/libexec
+install -o root -g root -m 0755 "$source_binary" "$installed_binary"
+if [ -x "$openocd_source" ]; then
+    install -o root -g root -m 0755 "$openocd_source" "$openocd_binary"
+fi
+
+candidate=$(mktemp /tmp/ebaz-mmio-sudoers.XXXXXX)
+trap 'rm -f "$candidate"' EXIT HUP INT TERM
+printf '%s ALL=(root) NOPASSWD: %s\n' "$runner_user" "$installed_binary" >"$candidate"
+if [ -x "$openocd_binary" ]; then
+    printf '%s ALL=(root) NOPASSWD: %s\n' "$runner_user" "$openocd_binary" >>"$candidate"
+fi
+chmod 0440 "$candidate"
+visudo -cf "$candidate"
+install -o root -g root -m 0440 "$candidate" "$sudoers_file"
+visudo -cf "$sudoers_file"
+
+echo "Installed: $installed_binary"
+if [ -x "$openocd_binary" ]; then
+    echo "Installed: $openocd_binary"
+fi
+echo "Authorized user: $runner_user"
+echo "Passwordless test: sudo -n $installed_binary 100 1"

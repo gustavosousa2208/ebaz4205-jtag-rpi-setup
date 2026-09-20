@@ -1,0 +1,47 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * EBAZ semi-JTAG wiring:
+ *   PC0/header 19 = TDI/MOSI
+ *   PC1/header 21 = TDO/MISO
+ *   PC2/header 23 = TCK/SCLK
+ *   PC3/header 24 = TMS (GPIO, deliberately not SPI chip-select)
+ *
+ * The stock sun8i-h3-spi-spidev overlay claims PC3 as SPI CS. This overlay
+ * leaves PC3 available to a GPIO v2 client and relies on SPI_NO_CS in the
+ * userspace transport.
+ */
+
+/ {
+	compatible = "allwinner,sun8i-h3";
+
+	fragment@0 {
+		target-path = "/soc/pinctrl@1c20800";
+		__overlay__ {
+			spi0_no_cs_pins: spi0-no-cs-pins {
+				pins = "PC0", "PC1", "PC2";
+				function = "spi0";
+				bias-disable;
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/soc/spi@1c68000";
+		__overlay__ {
+			status = "okay";
+			pinctrl-names = "default";
+			pinctrl-0 = <&spi0_no_cs_pins>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			spidev@0 {
+				compatible = "armbian,spi-dev";
+				reg = <0>;
+				spi-max-frequency = <50000000>;
+				status = "okay";
+			};
+		};
+	};
+};

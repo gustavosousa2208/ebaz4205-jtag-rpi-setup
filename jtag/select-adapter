@@ -11,9 +11,17 @@ case "${EBAZ_JTAG_ADAPTER:-cmsis-dap}" in
         EBAZ_JTAG_ADAPTER=raspberrypi-gpio
         EBAZ_ADAPTER_CFG="$bundle_dir/adapters/raspberrypi-gpio.cfg"
         ;;
+    bananapi-gpio|bananapi_m2_zero_gpio|bananapi-m2-zero-gpio)
+        EBAZ_JTAG_ADAPTER=bananapi-m2-zero-gpio
+        EBAZ_ADAPTER_CFG="$bundle_dir/adapters/bananapi-m2-zero-gpio.cfg"
+        ;;
+    bananapi-mmio|bananapi_m2_zero_mmio|bananapi-m2-zero-mmio)
+        EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio
+        EBAZ_ADAPTER_CFG="$bundle_dir/adapters/bananapi-m2-zero-gpio.cfg"
+        ;;
     *)
         echo "Unsupported JTAG adapter: ${EBAZ_JTAG_ADAPTER}" >&2
-        echo "Supported adapters: cmsis-dap, raspberrypi-gpio" >&2
+        echo "Supported adapters: cmsis-dap, raspberrypi-gpio, bananapi-m2-zero-gpio, bananapi-m2-zero-mmio" >&2
         return 2 2>/dev/null || exit 2
         ;;
 esac

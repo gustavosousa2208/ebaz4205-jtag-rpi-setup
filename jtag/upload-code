@@ -11,6 +11,17 @@ force_full=false
 capture_uart=false
 keep_openocd=false
 uart_seconds=${EBAZ_UART_SECONDS:-3}
+pld_retries=${EBAZ_PLD_RETRIES:-3}
+upload_timeout_seconds=${EBAZ_UPLOAD_TIMEOUT_SECONDS:-300}
+if ! [[ "$pld_retries" =~ ^[0-9]+$ ]] || [ "$pld_retries" -lt 1 ]; then
+    echo "EBAZ_PLD_RETRIES must be a positive integer." >&2
+    exit 2
+fi
+if ! [[ "$upload_timeout_seconds" =~ ^[0-9]+$ ]] || [ "$upload_timeout_seconds" -lt 1 ]; then
+    echo "EBAZ_UPLOAD_TIMEOUT_SECONDS must be a positive integer." >&2
+    exit 2
+fi
+EBAZ_PLD_RETRIES=$pld_retries
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --full)
@@ -140,6 +151,7 @@ export EBAZ_BUNDLE_DIR EBAZ_ELF EBAZ_BITSTREAM EBAZ_ENTRY EBAZ_PIDFILE
 export EBAZ_UPLOAD_CFG EBAZ_LOAD_BITSTREAM EBAZ_SUCCESS_MARKER EBAZ_PLD_DEVICE
 export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL EBAZ_OPENOCD
 export EBAZ_OPENOCD_SCRIPTS EBAZ_USE_SUDO
+export EBAZ_PLD_RETRIES
 
 timestamp=$(date '+%Y%m%d-%H%M%S')
 log_file="$log_dir/${timestamp}-code.log"
@@ -159,6 +171,8 @@ uart_log="$log_dir/${timestamp}-uart.log"
     echo "previous_openocd_pid=${old_pid:-none}"
     echo "requested_bitstream_sha256=$requested_bitstream_hash"
     echo "programmed_bitstream_sha256=${programmed_bitstream_hash:-unknown}"
+    echo "pld_retries=$pld_retries"
+    echo "upload_timeout_seconds=$upload_timeout_seconds"
     ebaz_sha256_report "$EBAZ_ELF"
     ebaz_sha256_report "$EBAZ_BITSTREAM"
     uname -a
@@ -208,7 +222,7 @@ else
 fi
 
 if [ "$EBAZ_USE_SUDO" = 1 ]; then
-    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_SUCCESS_MARKER,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO \
+    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_SUCCESS_MARKER,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO,EBAZ_PLD_RETRIES \
         "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
 else
     nohup "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 </dev/null &
@@ -216,7 +230,7 @@ fi
 openocd_job=$!
 
 status=1
-for _ in $(seq 1 450); do
+for _ in $(seq 1 $((upload_timeout_seconds * 5))); do
     if [ -s "$success_marker" ]; then
         status=0
         break
