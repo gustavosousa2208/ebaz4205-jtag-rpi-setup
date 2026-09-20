@@ -123,6 +123,39 @@ category, DEVCFG result, and elapsed time. `EBAZ_TEST_FAIL_PL_ATTEMPT=1` injects
 a transport failure before touching PL state and is intended only for testing
 fallback and exhausted-ladder handling.
 
+### Stress-tested deployment limits
+
+The reference Banana Pi passed 20/20 consecutive full uploads at a requested
+1000 kHz on 2026-09-20. Every run had `PCFG_DONE=1`, `PCFG_INIT=1`, released
+FPGA resets, enabled level shifters, a verified ELF at `0x10000`, and a UART
+heartbeat. The PL-stage timing was 18.594 s minimum, 18.602 s median, 18.613 s
+mean, and 18.834 s maximum. Observed 1-minute system load average was 0.22 at
+the start and at most 1.07 during the series. Five subsequent ELF-only uploads
+passed in 1.220-1.222 s each, versus the 5.055 s linuxgpiod baseline.
+
+A requested 2000 kHz test reached 1252 kHz effective and failed safely with
+`PCFG_DONE=0`, `INT_STS=0x0802000b`, category `configuration`, and a nonzero
+exit. A full 1000 kHz upload immediately recovered and restored the UART
+heartbeat. Therefore 1000 kHz is both the highest zero-failure tested rate and
+the production default; 2000 kHz is outside the demonstrated reliable range.
+
+Reproduce the production-rate series with:
+
+```sh
+for run in $(seq 1 20); do
+    EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio \
+    EBAZ_JTAG_RATE_LADDER=1000 EBAZ_PLD_RETRIES=1 \
+    EBAZ_UART_SECONDS=1 make upload-full UART=1 || break
+done
+```
+
+Use short direct TCK/TMS/TDI/TDO jumpers and exactly one common ground between
+Banana header 20 and EBAZ J8-7. The tested cable length still needs to be
+recorded before treating these electrical results as transferable to another
+harness. Do not infer success from LEDs: require all register, ELF, and UART
+checks listed above. After any failed high-rate experiment, rerun a full upload
+at 1000 kHz; the failure path invalidates the cached PL-verification marker.
+
 The visible green EBAZ LEDs are user PL outputs, not a guaranteed configuration
 DONE indicator. They turn on only when the loaded design drives their FPGA pins.
 
