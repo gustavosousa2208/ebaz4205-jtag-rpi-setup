@@ -6,8 +6,13 @@ uploader at the same time: both own the physical JTAG pins.
 
 ## Test environment
 
-- Canonical package: `~/ebaz4205-jtag` on gusta-bpi; this hardening change is
-  being developed for the next commit.
+- Canonical package: `~/ebaz4205-jtag`, commit `b246c3d`
+- Banana Pi: Armbian 26.11.0-trunk.57 (Debian 13 trixie), Linux
+  `6.18.52-current-sunxi` on armv7l
+- Desktop: Windows 11 Pro build 26200, PowerShell 7.6.6, Windows OpenSSH
+- OpenOCD: `0.12.0+dev-gb04ccfe-dirty`
+- Vivado and `hw_server`: not found in PATH or the inspected Xilinx install
+  locations on gusta-desktop, so no version is available to record.
 - UART service: `~/ebaz4205-jtag/uart/uart-bridge.py`; replay TCP 2217, live TCP 2218
 - UART cron tag: `ebaz4205-jtag:uart-bridge`
 - OpenOCD source/build: `~/source/openocd-ebaz`
@@ -32,10 +37,10 @@ uploader at the same time: both own the physical JTAG pins.
 entries and adding restored exactly one. A synthetic crontab with unrelated
 entries proved remove/add preserves them and repeated add is idempotent. The
 script also replaces the former `link-test:uart-bridge` tag. Clients connected
-and disconnected on both ports. `sudo -n reboot` was denied because the account
-requires a password; actual startup after reboot remains unverified. The
-supervisor restart-on-failure behavior is covered in the integration suite,
-but it does not replace a real reboot check.
+and disconnected on both ports. I replayed the exact delayed `@reboot` command
+body: after its 20-second delay exactly one supervisor and bridge appeared,
+and both ports listened. `sudo -n reboot` was denied because the account
+requires a password, so an actual hardware reboot remains unverified.
 
 ### 2. UART service failure behavior
 
