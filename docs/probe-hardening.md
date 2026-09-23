@@ -6,13 +6,16 @@ uploader at the same time: both own the physical JTAG pins.
 
 ## Test environment
 
-- Canonical package: `~/ebaz4205-jtag`, commit `8b41b24`
+- Canonical package: `~/ebaz4205-jtag`, commit `f0e4241`
 - Banana Pi: Armbian 26.11.0-trunk.57 (Debian 13 trixie), Linux
   `6.18.52-current-sunxi` on armv7l
 - Desktop: Windows 11 Pro build 26200, PowerShell 7.6.6, Windows OpenSSH
 - OpenOCD: `0.12.0+dev-gb04ccfe-dirty`
-- Vivado and `hw_server`: not found in PATH or the inspected Xilinx install
-  locations on gusta-desktop, so no version is available to record.
+- Vivado and `hw_server`: not installed/found on gusta-desktop; no version is
+  available to record. Windows reports only `C:` and `D:` filesystem drives;
+  `C:\Xilinx`, `D:\Xilinx`, and the previously suspected `F:\Xilinx` are
+  absent. Recursive checks under the existing `D:\AMDDesignTools` and
+  `D:\Xilinx_2025.2` found no `vivado.bat` or `hw_server.bat`.
 - UART service: `~/ebaz4205-jtag/uart/uart-bridge.py`; replay TCP 2217, live TCP 2218
 - UART cron tag: `ebaz4205-jtag:uart-bridge`
 - OpenOCD source/build: `~/source/openocd-ebaz`
@@ -96,9 +99,11 @@ IDCODE passed 2/2; after stopping XVC, canonical OpenOCD `make probe` passed
 again. Fake XVC also passed end-to-end through the documented SSH local-forward
 started from Windows PowerShell; the desktop received `xvcServer_v1.0:32768`
 from the Pi's loopback-only server.
-Vivado remains untested:
-`vivado` and `hw_server` are absent from PATH, `C:\Xilinx` is absent, and
-`D:\Xilinx_2025.2` contains no `vivado.bat` or `hw_server.bat`.
+Vivado remains untested because neither Vivado nor `hw_server` is installed on
+the desktop. A fresh check found only `C:` and `D:` mounted; `F:\Xilinx` (the
+path suggested by a stale Xilinx driver registry entry) is absent. Recursive
+checks of `D:\AMDDesignTools` and `D:\Xilinx_2025.2` found no `vivado.bat` or
+`hw_server.bat`.
 
 AMD's documented XVC workflow is to add a Xilinx Virtual Cable in Vivado
 Hardware Manager and specify its host and port. Our server intentionally binds
