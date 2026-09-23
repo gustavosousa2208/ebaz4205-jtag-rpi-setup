@@ -91,6 +91,26 @@ PTY path after repeated startup failures, then verifies bridge startup, live
 data delivery, and continued supervisor operation. After the kernel update and
 reboot, the same Linux PTY suite passed 10/10 on `gusta-bpi`.
 
+### 2a. UART capture during an upload
+
+The first canonical upload after the kernel reboot completed in 34.285 s but
+captured zero UART bytes. The upload helper tried to open `/dev/ttyS3` directly
+while the reboot-started bridge already held it with `TIOCEXCL`; a second open
+was reproduced as `EBUSY`. Banana Pi uploads now subscribe to the bridge's live
+TCP endpoint (`127.0.0.1:2218`) before programming. The first TCP attempt still
+captured zero bytes because the helper treated a normal 200 ms read timeout as
+end-of-stream and exited during bitstream staging. The helper now waits through
+timeouts and exits only on an actual socket close.
+
+**Status:** on 2026-09-23,
+`EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio EBAZ_USE_SUDO=0 make upload-pcap UART=1`
+completed with `PCFG_DONE=1`, `INIT_B=1`, and the ELF started. It captured
+`Hello world from the EBAZ4205 Cortex-A9! heartbeat=0` (54 bytes) from that
+same run. PCAP staging took 28.811 s, target CRC 1.422 s, and the OpenOCD flow
+reported 34.128 s total. Afterward the UART bridge remained the only UART
+owner, with both ports 2217 and 2218 listening; no OpenOCD/XVC process or port
+remained.
+
 ### 3. XVC protocol, Vivado, ownership handoff, and OpenOCD recovery
 
 - Run `jtag/xvc/test_xvc.py` against the XVC server in `--fake` mode. This
