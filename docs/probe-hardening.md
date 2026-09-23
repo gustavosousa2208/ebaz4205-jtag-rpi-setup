@@ -180,9 +180,12 @@ lookup now points to the moved checkout. The source and installed OpenOCD
 binaries have identical SHA-256
 `c2370ab9af349bcb2019eec3472387a6a5a0291e8ee861948517f60a2d89664a`; the
 installed passwordless IDCODE runner passed a live one-scan check of both TAPs
-at 100 kHz and reported `restored=yes`. `sudo -n -l` confirms the two installed
-runners are authorized. Running the privileged installer itself remains
-unverified because it requires interactive sudo authentication.
+at 100 kHz and reported `restored=yes`. On 2026-09-23, the user reran
+`sudo ./jtag/install-mmio-runner` interactively. Afterward the installed
+IDCODE runner passed two scans at 100 kHz with both TAPs and `restored=yes`;
+`sudo -n /usr/local/libexec/openocd-ebaz-mmio -v` also succeeded. The installed
+OpenOCD hash still matches the moved source binary, verifying the installer and
+both passwordless runner paths.
 
 ### 5. Fresh-agent discoverability
 
