@@ -23,12 +23,20 @@ if [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; then
         -c "set ::env(EBAZ_JTAG_RATE_LADDER) {$EBAZ_JTAG_RATE_LADDER}" \
         -c "set ::env(EBAZ_TEST_FAIL_PL_ATTEMPT) {$EBAZ_TEST_FAIL_PL_ATTEMPT}" \
         -c "set ::env(EBAZ_JTAG_ADAPTER) {$EBAZ_JTAG_ADAPTER}" \
+        -c "bindto 127.0.0.1" \
+        -c "gdb port 3333" \
+        -c "tcl port disabled" \
+        -c "telnet port disabled" \
         -s "$EBAZ_OPENOCD_SCRIPTS" \
         -f "$EBAZ_ADAPTER_CFG" \
         -f "$EBAZ_BUNDLE_DIR/ebaz4205.cfg" \
         -f "$upload_cfg"
 else
     exec "$EBAZ_OPENOCD" \
+        -c "bindto 127.0.0.1" \
+        -c "gdb port 3333" \
+        -c "tcl port disabled" \
+        -c "telnet port disabled" \
         -s "$EBAZ_OPENOCD_SCRIPTS" \
         -f "$EBAZ_ADAPTER_CFG" \
         -f "$EBAZ_BUNDLE_DIR/ebaz4205.cfg" \
