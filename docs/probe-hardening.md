@@ -6,7 +6,8 @@ uploader at the same time: both own the physical JTAG pins.
 
 ## Test environment
 
-- Canonical package: `~/ebaz4205-jtag`, commit `f0e4241`
+- Canonical package: `~/ebaz4205-jtag`; code checks ran at `f0e4241`, and the
+  updated record is at `b80bc52`
 - Banana Pi: Armbian 26.11.0-trunk.57 (Debian 13 trixie), Linux
   `6.18.52-current-sunxi` on armv7l
 - Desktop: Windows 11 Pro build 26200, PowerShell 7.6.6, Windows OpenSSH
@@ -124,9 +125,13 @@ only to Pi localhost, so the remote desktop must use SSH local forwarding; see
 **Status:** `~/source/openocd-ebaz/src/openocd` is executable, the original
 modified/untracked source files remain unchanged, and the installed OpenOCD
 binary completed a canonical physical probe after the move. Installer source
-lookup now points to the moved checkout. Running the privileged installer
-itself remains unverified because non-interactive sudo does not allow that
-installer command.
+lookup now points to the moved checkout. The source and installed OpenOCD
+binaries have identical SHA-256
+`c2370ab9af349bcb2019eec3472387a6a5a0291e8ee861948517f60a2d89664a`; the
+installed passwordless IDCODE runner passed a live one-scan check of both TAPs
+at 100 kHz and reported `restored=yes`. `sudo -n -l` confirms the two installed
+runners are authorized. Running the privileged installer itself remains
+unverified because it requires interactive sudo authentication.
 
 ### 5. Fresh-agent discoverability
 
