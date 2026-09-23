@@ -1,0 +1,34 @@
+Open On-Chip Debugger 0.12.0+dev-gb04ccfe-dirty (2026-09-20-19:56)
+Licensed under GNU GPL v2
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+/home/gusta/link-test
+/home/gusta/link-test/link_loopback.bin
+520925
+adapter speed: 100 kHz
+Warn : [zynq.dap] DEPRECATED! '-chain-position' will be removed in the future, use '-tap' instead
+Warn : [zynq_pl.pld] DEPRECATED! '-chain-position' will be removed in the future, use '-tap' instead
+Info : Linux GPIOD JTAG/SWD bitbang driver
+Info : EBAZ Allwinner Port-C MMIO acceleration enabled
+Info : EBAZ MMIO rate selected: requested_khz=1000
+Info : clock speed 1000 kHz
+Info : JTAG tap: zynq_pl.bs tap/device found: 0x13722093 (mfg: 0x049 (Xilinx), part: 0x3722, ver: 0x1)
+Info : JTAG tap: zynq.cpu tap/device found: 0x4ba00477 (mfg: 0x23b (ARM Ltd), part: 0xba00, ver: 0x4)
+Info : [zynq.cpu0] hardware has 6 breakpoints, 4 watchpoints
+Info : [zynq.cpu0] MPIDR level2 0, cluster 0, core 0, multi core, no SMT
+Info : [zynq.cpu0] Examination succeed
+Info : [zynq.cpu1] hardware has 6 breakpoints, 4 watchpoints
+Info : [zynq.cpu1] Examination succeed
+Info : [zynq.cpu0] gdb port disabled
+Info : [zynq.cpu1] gdb port disabled
+PS_INIT_DONE
+STAGED: 2083700 bytes written at address 0x00100000
+downloaded 2083700 bytes in 72.151001s (28.203 KiB/s)  (+76 s)
+VERIFY_OK: byte-for-byte readback, 2083700 bytes identical  (+154 s)
+DDR[0]=0xFFFFFFFF DDR[1]=0xFFFFFFFF DDR[8]=0x30008001
+after PROG_B low : STATUS=0x40000A00
+after PROG_B high: STATUS=0x40000A30
+DEVCFG INT_STS=0x50023004 STATUS=0x50000F30
+PCAP_RESULT: OK INT_STS=0x50023004 STATUS=0x50000F30  (+155 s)
+shutdown command invoked
+Info : EBAZ MMIO rate result: requested_khz=1000 effective_khz=864 rising_edges=133784151 elapsed_ms=154768.575

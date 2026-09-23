@@ -21,10 +21,7 @@ case "$runner_user" in
 esac
 
 runner_home=$(getent passwd "$runner_user" | cut -d: -f6)
-openocd_source="$source_dir/../openocd-ebaz/src/openocd"
-if [ ! -x "$openocd_source" ] && [ -n "$runner_home" ]; then
-    openocd_source="$runner_home/openocd-ebaz/src/openocd"
-fi
+openocd_source="$runner_home/source/openocd-ebaz/src/openocd"
 
 if [ ! -x "$source_binary" ]; then
     echo "Build $source_binary first with $source_dir/build-mmio-jtag" >&2
@@ -36,7 +33,7 @@ install -o root -g root -m 0755 "$source_binary" "$installed_binary"
 if [ -x "$openocd_source" ]; then
     install -o root -g root -m 0755 "$openocd_source" "$openocd_binary"
 else
-    echo "OpenOCD build not found; checked project sibling and $runner_home/openocd-ebaz." >&2
+    echo "OpenOCD build not found; checked $runner_home/source/openocd-ebaz." >&2
     exit 2
 fi
 

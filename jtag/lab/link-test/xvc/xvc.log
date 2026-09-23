@@ -1,0 +1,4 @@
+xvc-server: Port C GPIO (TDI=PC0 TDO=PC1 TCK=PC2 TMS=PC3), listening on 127.0.0.1:2542, rate 1000 kHz, max vector 32768 bytes
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: stopped, pins restored

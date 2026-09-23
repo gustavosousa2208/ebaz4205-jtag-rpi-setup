@@ -1,0 +1,36 @@
+Open On-Chip Debugger 0.12.0+dev-gb04ccfe-dirty (2026-09-20-19:56)
+Licensed under GNU GPL v2
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+/home/gusta/link-test
+adapter speed: 100 kHz
+Warn : [zynq.dap] DEPRECATED! '-chain-position' will be removed in the future, use '-tap' instead
+Warn : [zynq_pl.pld] DEPRECATED! '-chain-position' will be removed in the future, use '-tap' instead
+Info : Linux GPIOD JTAG/SWD bitbang driver
+Info : EBAZ Allwinner Port-C MMIO acceleration enabled
+Info : EBAZ MMIO rate selected: requested_khz=1000
+Info : clock speed 1000 kHz
+Info : JTAG tap: zynq_pl.bs tap/device found: 0x13722093 (mfg: 0x049 (Xilinx), part: 0x3722, ver: 0x1)
+Info : JTAG tap: zynq.cpu tap/device found: 0x4ba00477 (mfg: 0x23b (ARM Ltd), part: 0xba00, ver: 0x4)
+Info : [zynq.cpu0] hardware has 6 breakpoints, 4 watchpoints
+Info : [zynq.cpu0] Examination succeed
+Info : [zynq.cpu1] hardware has 6 breakpoints, 4 watchpoints
+Info : [zynq.cpu1] MPIDR level2 0, cluster 0, core 1, multi core, no SMT
+Info : [zynq.cpu1] Examination succeed
+Info : [zynq.ahb] Examination succeed
+Info : [zynq.cpu0] starting gdb server on 3333
+Info : Listening on port 3333 for gdb connections
+Info : [zynq.ahb] gdb port disabled
+PROBE_TAPS=ok
+PROBE_DEVCFG_CTRL=0x4E00E07F
+PROBE_DEVCFG_INTSTS=0x50023004
+PROBE_DEVCFG_STATUS=0x50000F30
+PROBE_SLCR_LVL_SHFTR=0x0000000F
+PROBE_SLCR_FPGA_RST=0x00000000
+PROBE_SLCR_BOOT_MODE=0x00000005
+PROBE_PLL_STATUS=0x0000003F
+PROBE_FPGA0_CLK_CTRL=0x00400700
+PROBE_PCFG_DONE=1
+PROBE_DONE
+shutdown command invoked
+Info : EBAZ MMIO rate result: requested_khz=1000 effective_khz=661 rising_edges=61983 elapsed_ms=93.692

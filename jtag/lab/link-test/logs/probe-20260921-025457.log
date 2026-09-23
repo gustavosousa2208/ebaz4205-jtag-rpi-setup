@@ -1,0 +1,26 @@
+Open On-Chip Debugger 0.12.0+dev-gb04ccfe-dirty (2026-09-20-19:56)
+Licensed under GNU GPL v2
+For bug reports, read
+	http://openocd.org/doc/doxygen/bugs.html
+/home/gusta/link-test
+adapter speed: 100 kHz
+Warn : [zynq.dap] DEPRECATED! '-chain-position' will be removed in the future, use '-tap' instead
+Warn : [zynq_pl.pld] DEPRECATED! '-chain-position' will be removed in the future, use '-tap' instead
+Info : Linux GPIOD JTAG/SWD bitbang driver
+Info : EBAZ Allwinner Port-C MMIO acceleration enabled
+Info : EBAZ MMIO rate selected: requested_khz=1000
+Info : clock speed 1000 kHz
+Error: JTAG scan chain interrogation failed: all zeroes
+Error: Check JTAG interface, timings, target power, etc.
+Error: Trying to use configured scan chain anyway...
+Error: zynq_pl.bs: IR capture error; saw 0x00 not 0x01
+Warn : Bypassing JTAG setup events due to errors
+Error: Invalid ACK (0) in DAP response
+Traceback (most recent call last):
+, in script
+    {dap init}
+/home/gusta/link-test/probe.tcl:11: Error: 
+Traceback (most recent call last):
+  File "/home/gusta/link-test/probe.tcl", line 11, in script
+    init
+Info : EBAZ MMIO rate result: requested_khz=1000 effective_khz=178 rising_edges=1069 elapsed_ms=6.005

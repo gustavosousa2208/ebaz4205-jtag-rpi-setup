@@ -107,7 +107,7 @@ rate from 100, 250, 500, 1000, 2000, and 5000 kHz. Effective rates were 100,
 conservative rate; requests above 1 MHz currently saturate around 1.19 MHz.
 
 The production Banana Pi path is `bananapi-m2-zero-mmio`. Build the patched
-OpenOCD tree as `~/openocd-ebaz`, build the scanner, and install both root-owned
+OpenOCD tree as `~/source/openocd-ebaz`, build the scanner, and install both root-owned
 binaries plus the narrow passwordless runner rule:
 
 ```sh

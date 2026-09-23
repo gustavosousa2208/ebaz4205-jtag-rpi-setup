@@ -56,7 +56,7 @@ in 34.2 seconds at 1 MHz with a 4-clock DAP memory delay and no WAIT retries.
 Add `UART=1` for an optional heartbeat capture.
 
 Install the Banana Pi helper binaries after building patched OpenOCD in
-`~/openocd-ebaz`:
+`~/source/openocd-ebaz`:
 
 ```sh
 ./jtag/build-mmio-jtag
@@ -76,14 +76,17 @@ make probe
 EBAZ_JTAG_ADAPTER=bananapi-m2-zero-gpio make probe
 ```
 
-See [jtag/README.md](jtag/README.md) for adapter setup, UART, rate fallback,
-stress results, recovery, and diagnostic details.
+See [jtag/README.md](jtag/README.md) for adapter setup, rate fallback, stress
+results, recovery, and diagnostic details. The Banana Pi UART bridge lives in
+[`uart/`](uart/README.md); XVC support and its Vivado follow-up are tracked
+under [`jtag/xvc/`](jtag/xvc/README.md) and Bead `ebaz4205-71t.1`.
 
 ## Project layout
 
 - `app/` — C application, startup assembly, linker script
 - `hardware/` — matching `.bit` and `.xsa`
-- `jtag/` — adapters, OpenOCD configuration, upload tools, logs
+- `jtag/` — adapters, OpenOCD configuration, upload tools, XVC, and lab archive
+- `uart/` — Banana Pi serial bridge and reboot service
 - `tools/` — platform maintenance helpers
 - `build/` — generated ELF, objects, and map files
 

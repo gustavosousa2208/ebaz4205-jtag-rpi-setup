@@ -1,0 +1,18 @@
+uart-bridge: /dev/ttyS3 115200 8N1 -> tcp 0.0.0.0:2217 (replay) and :2218 (live), read-only
+21:40:45 client 192.168.18.118:62177 on port 2218
+uart-bridge: /dev/ttyS3 115200 8N1 -> tcp 0.0.0.0:2217 (replay) and :2218 (live), read-only
+02:43:47 client 192.168.18.118:51222 on port 2218
+02:45:01 client 192.168.18.118:58931 on port 2218
+02:46:21 client 192.168.18.118:53461 on port 2218
+02:54:11 client 192.168.18.118:57351 on port 2218
+03:01:41 client 192.168.18.118:62216 on port 2218
+03:02:48 client 192.168.18.118:62272 on port 2218
+04:07:35 client 192.168.18.118:63258 on port 2218
+04:12:09 client 192.168.18.118:54406 on port 2218
+04:33:29 client 192.168.18.118:56464 on port 2218
+05:11:18 client 192.168.18.118:54596 on port 2218
+05:20:52 client 192.168.18.118:58611 on port 2218
+uart-bridge: /dev/ttyS3 115200 8N1 -> tcp 0.0.0.0:2217 (replay) and :2218 (live), read-only
+uart-bridge: /dev/ttyS3 115200 8N1 -> tcp 0.0.0.0:2217 (replay) and :2218 (live), read-only
+uart-bridge: /dev/ttyS3 115200 8N1 -> tcp 0.0.0.0:2217 (replay) and :2218 (live), read-only
+uart-bridge: /dev/ttyS3 115200 8N1 -> tcp 0.0.0.0:2217 (replay) and :2218 (live), read-only

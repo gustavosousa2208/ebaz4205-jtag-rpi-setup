@@ -1,0 +1,91 @@
+xvc-server: FAKE mode (no hardware), listening on 127.0.0.1:2542, rate 1000 kHz, max vector 32768 bytes
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 0 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 262152 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 4294967295 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: unknown command 68 65, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 0 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 262152 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 4294967295 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: unknown command 68 65, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: unknown command 00 01, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 0 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 262152 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 4294967295 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: unknown command 68 65, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: unknown command 00 01, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 0 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 262152 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: bad shift length 4294967295 bits, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: unknown command 68 65, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc: unknown command 00 01, closing
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: client connected
+xvc-server: client disconnected
+xvc-server: stopped, pins restored

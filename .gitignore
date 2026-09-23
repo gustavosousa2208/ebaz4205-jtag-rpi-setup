@@ -7,6 +7,8 @@
 # Runtime state and diagnostic captures
 /jtag/logs/
 /jtag/run/
+/uart/logs/
+/jtag/xvc/ebaz-xvc-server
 
 # Locally packaged archives
 /dist/

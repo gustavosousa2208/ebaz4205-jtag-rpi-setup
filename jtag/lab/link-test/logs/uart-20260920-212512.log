@@ -1,0 +1,35 @@
+Hello world from the EBAZ4205 Cortex-A9! heartbeat=113
+Hello world from the EBAZ4205 Cortex-A9! heartbeat=114
+Hello world from the EBAZ4205 Cortex-A9! heartbeat=115
+
+link_loopback test runner (rp-nni.4.7)
+link_axil VERSION = 0x4C4B0100
+run 0: 100 frames, len 32
+RUN,loopback,frames=100,len=32,first_id=0,tx=100,bits=25600,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 1: 10000 frames, len 32
+RUN,loopback,frames=10000,len=32,first_id=0,tx=10000,bits=2560000,bits_hi=0,rx=10000,ok=10000,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 2: 100 frames, len 0
+RUN,loopback,frames=100,len=0,first_id=0,tx=100,bits=0,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 3: 100 frames, len 1
+RUN,loopback,frames=100,len=1,first_id=0,tx=100,bits=800,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 4: 100 frames, len 255
+RUN,loopback,frames=100,len=255,first_id=4096,tx=100,bits=204000,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 5: 50 frames, len 1000
+RUN,loopback,frames=50,len=1000,first_id=2147483392,tx=50,bits=400000,bits_hi=0,rx=50,ok=50,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+RESULT: PASS (all runs)
+
+link_loopback test runner (rp-nni.4.7)
+link_axil VERSION = 0x4C4B0100
+run 0: 100 frames, len 32
+RUN,loopback,frames=100,len=32,first_id=0,tx=100,bits=25600,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 1: 10000 frames, len 32
+RUN,loopback,frames=10000,len=32,first_id=0,tx=10000,bits=2560000,bits_hi=0,rx=10000,ok=10000,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 2: 100 frames, len 0
+RUN,loopback,frames=100,len=0,first_id=0,tx=100,bits=0,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 3: 100 frames, len 1
+RUN,loopback,frames=100,len=1,first_id=0,tx=100,bits=800,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 4: 100 frames, len 255
+RUN,loopback,frames=100,len=255,first_id=4096,tx=100,bits=204000,bits_hi=0,rx=100,ok=100,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+run 5: 50 frames, len 1000
+RUN,loopback,frames=50,len=1000,first_id=2147483392,tx=50,bits=400000,bits_hi=0,rx=50,ok=50,crc_fail=0,mismatch_crc_ok=0,hdr_err=0,bit_err=0,lost_gap=0,result=PASS
+RESULT: PASS (all runs)
