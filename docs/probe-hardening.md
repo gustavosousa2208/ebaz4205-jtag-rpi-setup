@@ -146,11 +146,16 @@ same Vivado session programmed the known-good shared-drive bitstream
 `7z010clg400`). `program_hw_devices` exited 0 and reported `End of startup
 status: HIGH`; `refresh_hw_device` confirmed the programmed `xc7z010`.
 
-Cleanup is still pending: Vivado closed its target, but the root XVC server
-remains active as PID 1862 on the Pi and owns the GPIO lines. A noninteractive
-`sudo -n /bin/kill -TERM 1862` was denied because it requires a password. Do
-not start OpenOCD until the server receives SIGTERM interactively and logs
-`stopped, pins restored`; then run `make probe` to verify post-program recovery.
+Post-program ownership handoff passed on 2026-09-23. After the user stopped
+XVC PID 1862 with interactive `sudo kill -TERM 1862`, the process disappeared,
+TCP 2542 stopped listening, and `/tmp/ebaz-xvc-vivado.log` ended with
+`xvc-server: stopped, pins restored`. The canonical post-Vivado command
+`cd ~/ebaz4205-jtag && EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make probe`
+passed: PL ID `0x13722093`, ARM ID `0x4ba00477`, and both Cortex-A9 cores
+examined successfully. OpenOCD exited cleanly. UART bridge remained healthy
+with one supervisor, one bridge, and listeners on TCP 2217/2218. No XVC or
+OpenOCD owner remained after the probe. The privileged installer invocation
+still requires interactive sudo and remains unverified.
 
 AMD documents both the Hardware Manager XVC connection flow and Tcl
 `open_hw_target -xvc_url`; our server binds only to Pi localhost, so the remote
