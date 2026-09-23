@@ -6,8 +6,8 @@ uploader at the same time: both own the physical JTAG pins.
 
 ## Test environment
 
-- Canonical package: `~/ebaz4205-jtag`; UART shutdown hardening tested at
-  `28694ac`
+- Canonical package: `~/ebaz4205-jtag`; UART recovery hardening tested at
+  `12453cb`
 - Banana Pi: Armbian 26.11.0-trunk.57 (Debian 13 trixie), Linux
   `6.18.52-current-sunxi` on armv7l
 - Desktop: Windows 11 Pro build 26200, PowerShell 7.6.6, Windows OpenSSH
@@ -68,21 +68,26 @@ exit codes, logs, and whether any listener leaks remain.
   confirm the service continues accepting clients.
 - Supervisor stop: send `SIGTERM` to the supervisor with a PTY bridge active;
   verify it also terminates the child and releases both listeners.
+- Device return: start the supervisor while the serial path is missing, make a
+  PTY appear at that path, and verify the bridge starts and delivers live data.
 
 **Status:** Linux PTY suite passed 9/9 on gusta-bpi. It uses alternate ports and
 PTYs and covers startup failure, listener cleanup, port collision, replay/live,
 read-only default, explicit write mode, duplicate serial-owner rejection,
-client disconnect, serial-open retry, supervisor retry, and graceful supervisor
-termination. A live PTY experiment first reproduced a shutdown defect: signaling
+client disconnect, serial-open retry, supervisor retry, graceful supervisor
+termination, and recovery when the serial path becomes available. A live PTY
+experiment first reproduced a shutdown defect: signaling
 the supervisor left its bridge child alive and both ports bound. `run-bridge.sh`
 now forwards `SIGTERM` to the child and waits; the regression test confirms
-supervisor exit and successful rebinding of both ports. The updated suite passed
-9/9 on gusta-bpi. On macOS, 8 tests pass and the Linux-specific `TIOCEXCL`
-ownership test is skipped. A closed PTY master did not generate `EIO` on this
+supervisor exit and successful rebinding of both ports. The expanded suite
+passed 10/10 on gusta-bpi. On macOS, 9 tests pass and the Linux-specific
+`TIOCEXCL` ownership test is skipped. A closed PTY master did not generate `EIO` on this
 kernel; that setup cannot represent physical UART removal. The Pi's onboard UART
 controller remains present when its signal wire is unplugged. After deploying
 the fix, restarted the live service and verified one supervisor, one bridge,
-and both listeners on ports 2217/2218.
+and both listeners on ports 2217/2218. The recovery test creates the missing
+PTY path after repeated startup failures, then verifies bridge startup, live
+data delivery, and continued supervisor operation.
 
 ### 3. XVC protocol, Vivado, ownership handoff, and OpenOCD recovery
 
