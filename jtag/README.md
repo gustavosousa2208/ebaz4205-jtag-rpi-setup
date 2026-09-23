@@ -23,6 +23,7 @@ Select another probe or UART explicitly:
 EBAZ_CMSIS_DAP_SERIAL=012345ABCDEF ./upload-code --full
 EBAZ_UART_DEVICE=/dev/cu.usbserial-A5069RR4 ./upload-code --uart
 ./upload-code --full --uart-seconds 25 /path/to/app.elf /path/to/design.bit
+./upload-code --pcap --uart /path/to/app.elf /path/to/design.bit
 ```
 
 macOS uploads run without `sudo`.
@@ -186,6 +187,22 @@ Or specify both files:
 ```sh
 ./upload-code /path/to/application.elf /path/to/design.bit
 ```
+
+For the Banana Pi MMIO adapter, use the faster PS-side PCAP path:
+
+```sh
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload-pcap
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload-pcap UART=1
+```
+
+The PCAP flow converts `.bit` or gzip-compressed `.bit.gz` input to PCAP byte
+order, stages it in DDR, and verifies the full image with the Cortex-A target
+CRC before programming. It requires the local OpenOCD build with MMIO support
+and keeps the GDB server on localhost because this OpenOCD version needs its
+GDB service during target-side CRC execution. A tested 2,083,700-byte image,
+PL load, and ELF start took 36.6 seconds at 1 MHz and an 8-clock DAP delay.
+The older zero-delay / 1.5 MHz experiment took 27.4 seconds but generated DAP
+WAIT retries, so it is not the default.
 
 After resetting or power-cycling the board, explicitly start a new hardware
 session:

@@ -43,10 +43,17 @@ make
 EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make probe
 EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload-full UART=1
 EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload-pcap
 ```
 
 Use `upload-full` after every reset or power cycle. Later `upload` commands skip
 an unchanged bitstream and transfer only the ELF.
+
+`upload-pcap` extracts the Xilinx `.bit` payload, converts it to the Zynq PCAP
+byte order, stages it in DDR, checks it with the Cortex-A target CRC, then
+configures the PL and loads/starts the ELF. The tested Banana Pi run completed
+in 36.6 seconds at 1 MHz with an 8-clock DAP memory delay. Add `UART=1` for an
+optional heartbeat capture.
 
 Install the Banana Pi helper binaries after building patched OpenOCD in
 `~/openocd-ebaz`:

@@ -8,6 +8,7 @@ project_dir=$(CDPATH= cd -- "$bundle_dir/.." && pwd)
 ebaz_init_host
 
 force_full=false
+pcap_mode=false
 capture_uart=false
 keep_openocd=false
 uart_seconds=${EBAZ_UART_SECONDS:-3}
@@ -40,6 +41,11 @@ while [ "$#" -gt 0 ]; do
             force_full=true
             shift
             ;;
+        --pcap)
+            pcap_mode=true
+            force_full=true
+            shift
+            ;;
         --uart)
             capture_uart=true
             shift
@@ -63,7 +69,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         -*)
             echo "Unknown option: $1" >&2
-            echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
+            echo "Usage: $0 [--full | --pcap] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
             exit 2
             ;;
         *)
@@ -76,12 +82,12 @@ bitstream=${2:-$project_dir/hardware/ebaz_test.bit}
 
 if [ ! -r "$elf" ]; then
     echo "ELF not found or unreadable: $elf" >&2
-    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full | --pcap] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if [ ! -r "$bitstream" ]; then
     echo "Bitstream not found or unreadable: $bitstream" >&2
-    echo "Usage: $0 [--full] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
+    echo "Usage: $0 [--full | --pcap] [--uart] [--uart-seconds N] [--keep-openocd] [application.elf] [design.bit]" >&2
     exit 2
 fi
 if ! command -v arm-none-eabi-readelf >/dev/null 2>&1; then
@@ -90,6 +96,7 @@ if ! command -v arm-none-eabi-readelf >/dev/null 2>&1; then
 fi
 
 EBAZ_BUNDLE_DIR=$bundle_dir
+EBAZ_PCAP_BIN=""
 EBAZ_ELF=$(ebaz_abs_path "$elf")
 EBAZ_BITSTREAM=$(ebaz_abs_path "$bitstream")
 EBAZ_ENTRY=$(arm-none-eabi-readelf -h "$EBAZ_ELF" | awk '/Entry point address:/ {print $4; exit}')
@@ -101,6 +108,15 @@ fi
 run_dir="$bundle_dir/run"
 log_dir="$bundle_dir/logs"
 mkdir -p "$run_dir" "$log_dir"
+pcap_bin_file=""
+if $pcap_mode; then
+    pcap_bin_file=$(mktemp "$run_dir/pcap-image.XXXXXX")
+    if ! python3 "$bundle_dir/bit-to-pcap.py" "$EBAZ_BITSTREAM" "$pcap_bin_file"; then
+        rm -f -- "$pcap_bin_file"
+        exit 2
+    fi
+    EBAZ_PCAP_BIN=$(ebaz_abs_path "$pcap_bin_file")
+fi
 pid_file="$run_dir/openocd.pid"
 bitstream_hash_file="$run_dir/bitstream.sha256"
 pl_verified_hash_file="$run_dir/pl-verified.sha256"
@@ -128,7 +144,11 @@ if [ -r "$pl_verified_hash_file" ]; then
     programmed_bitstream_hash=$(tr -dc '0-9a-fA-F' <"$pl_verified_hash_file")
 fi
 
-if $force_full || [ -z "$programmed_bitstream_hash" ]; then
+if $pcap_mode; then
+    upload_mode=pcap-full-initialization
+    EBAZ_UPLOAD_CFG="$bundle_dir/upload-code-pcap.cfg"
+    EBAZ_LOAD_BITSTREAM=1
+elif $force_full || [ -z "$programmed_bitstream_hash" ]; then
     upload_mode=full-initialization
     EBAZ_UPLOAD_CFG="$bundle_dir/upload-code.cfg"
     EBAZ_LOAD_BITSTREAM=1
@@ -161,6 +181,7 @@ fi
 
 export EBAZ_BUNDLE_DIR EBAZ_ELF EBAZ_BITSTREAM EBAZ_ENTRY EBAZ_PIDFILE
 export EBAZ_UPLOAD_CFG EBAZ_LOAD_BITSTREAM EBAZ_SUCCESS_MARKER EBAZ_PLD_DEVICE
+export EBAZ_PCAP_BIN
 export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL EBAZ_OPENOCD
 export EBAZ_OPENOCD_SCRIPTS EBAZ_USE_SUDO
 export EBAZ_PLD_RETRIES
@@ -180,6 +201,10 @@ uart_log="$log_dir/${timestamp}-uart.log"
     echo "pld_device=$EBAZ_PLD_DEVICE"
     echo "elf=$EBAZ_ELF"
     echo "bitstream=$EBAZ_BITSTREAM"
+    if $pcap_mode; then
+        echo "pcap_image=$EBAZ_PCAP_BIN"
+        ebaz_sha256_report "$EBAZ_PCAP_BIN"
+    fi
     echo "entry=$EBAZ_ENTRY"
     echo "previous_openocd_pid=${old_pid:-none}"
     echo "requested_bitstream_sha256=$requested_bitstream_hash"
@@ -211,6 +236,9 @@ cleanup() {
         fi
         ebaz_remove_file "$pid_file"
     fi
+    if [ -n "$pcap_bin_file" ]; then
+        rm -f -- "$pcap_bin_file"
+    fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -228,7 +256,9 @@ else
     echo "uart_capture=disabled (use --uart to enable)" | tee -a "$log_file"
 fi
 
-if [ "$upload_mode" = full-initialization ]; then
+if [ "$upload_mode" = pcap-full-initialization ]; then
+    echo "PCAP path: initialize PS, stage and CRC-check bitstream, configure PL, then start ELF." | tee -a "$log_file"
+elif [ "$upload_mode" = full-initialization ]; then
     echo "Full path: PS initialization, bitstream, then ELF." | tee -a "$log_file"
 elif [ "$upload_mode" = bitstream-and-code ]; then
     echo "Fast path: changed bitstream, then ELF; PS initialization is skipped." | tee -a "$log_file"
@@ -237,7 +267,7 @@ else
 fi
 
 if [ "$EBAZ_USE_SUDO" = 1 ]; then
-    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_SUCCESS_MARKER,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO,EBAZ_PLD_RETRIES,EBAZ_JTAG_RATE_LADDER,EBAZ_TEST_FAIL_PL_ATTEMPT,EBAZ_JTAG_ADAPTER \
+    sudo --preserve-env=EBAZ_BUNDLE_DIR,EBAZ_ELF,EBAZ_BITSTREAM,EBAZ_PCAP_BIN,EBAZ_ENTRY,EBAZ_PIDFILE,EBAZ_UPLOAD_CFG,EBAZ_LOAD_BITSTREAM,EBAZ_SUCCESS_MARKER,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL,EBAZ_OPENOCD,EBAZ_OPENOCD_SCRIPTS,EBAZ_USE_SUDO,EBAZ_PLD_RETRIES,EBAZ_JTAG_RATE_LADDER,EBAZ_TEST_FAIL_PL_ATTEMPT,EBAZ_JTAG_ADAPTER \
         "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 &
 else
     nohup "$bundle_dir/openocd-daemon" >>"$log_file" 2>&1 </dev/null &
@@ -261,7 +291,7 @@ if [ "$status" -eq 0 ]; then
     if [ "$EBAZ_LOAD_BITSTREAM" = 1 ]; then
         printf '%s\n' "$requested_bitstream_hash" >"$pl_verified_hash_file"
     fi
-    if [ "$upload_mode" = full-initialization ]; then
+    if [ "$upload_mode" = full-initialization ] || [ "$upload_mode" = pcap-full-initialization ]; then
         rm -f -- "$full_init_marker"
     fi
 elif ebaz_process_alive "$openocd_job"; then
@@ -286,7 +316,9 @@ fi
 echo "exit_status=$status" | tee -a "$log_file"
 echo "Log saved to: $log_file"
 if [ "$status" -eq 0 ]; then
-    if [ "$upload_mode" = code-only ]; then
+    if [ "$upload_mode" = pcap-full-initialization ]; then
+        echo "PCAP upload complete: bitstream verified in DDR, configured through DevCfg, and ELF started."
+    elif [ "$upload_mode" = code-only ]; then
         echo "Fast upload complete: only the ELF was transferred."
     elif [ "$upload_mode" = bitstream-and-code ]; then
         echo "Bitstream changed: bitstream and ELF transferred without PS initialization."
@@ -301,7 +333,7 @@ if [ "$status" -eq 0 ]; then
     fi
 else
     tail -80 "$log_file"
-    if [ "$upload_mode" != full-initialization ]; then
+    if [ "$upload_mode" != full-initialization ] && [ "$upload_mode" != pcap-full-initialization ]; then
         echo "If the board was reset or power-cycled, power-cycle it cleanly and run: $0 --full" >&2
     fi
 fi

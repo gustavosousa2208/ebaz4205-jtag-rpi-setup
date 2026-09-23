@@ -20,7 +20,7 @@ UPLOAD_BITSTREAM ?= $(PROJECT_DIR)/hardware/ebaz_test.bit
 UPLOAD_DEPS = $(if $(filter $(ELF),$(UPLOAD_ELF)),$(ELF))
 UART_FLAG = $(if $(filter 1 yes true,$(UART)),--uart)
 
-.PHONY: all clean probe upload upload-full bitstream platform
+.PHONY: all clean probe upload upload-full upload-pcap bitstream platform
 
 all: $(ELF)
 
@@ -42,6 +42,9 @@ upload: $(UPLOAD_DEPS)
 
 upload-full: $(UPLOAD_DEPS)
 	$(JTAG_DIR)/upload-code --full $(UART_FLAG) "$(UPLOAD_ELF)" "$(UPLOAD_BITSTREAM)"
+
+upload-pcap: $(UPLOAD_DEPS)
+	$(JTAG_DIR)/upload-code --pcap $(UART_FLAG) "$(UPLOAD_ELF)" "$(UPLOAD_BITSTREAM)"
 
 probe:
 	$(JTAG_DIR)/probe

@@ -12,6 +12,7 @@ if [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; then
         -c "set ::env(EBAZ_BUNDLE_DIR) {$EBAZ_BUNDLE_DIR}" \
         -c "set ::env(EBAZ_ELF) {$EBAZ_ELF}" \
         -c "set ::env(EBAZ_BITSTREAM) {$EBAZ_BITSTREAM}" \
+        -c "set ::env(EBAZ_PCAP_BIN) {$EBAZ_PCAP_BIN}" \
         -c "set ::env(EBAZ_ENTRY) {$EBAZ_ENTRY}" \
         -c "set ::env(EBAZ_PIDFILE) {$EBAZ_PIDFILE}" \
         -c "set ::env(EBAZ_UPLOAD_CFG) {$EBAZ_UPLOAD_CFG}" \
