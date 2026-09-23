@@ -8,15 +8,13 @@ uploader at the same time: both own the physical JTAG pins.
 
 - Canonical package: `~/ebaz4205-jtag`; UART recovery hardening tested at
   `12453cb`
-- Banana Pi: Armbian 26.11.0-trunk.57 (Debian 13 trixie), Linux
-  `6.18.52-current-sunxi` on armv7l
+- Banana Pi after reboot: Armbian 26.11.0-trunk.57 (Debian 13 trixie), Linux
+  `6.18.53-current-sunxi` on armv7l
 - Desktop: Windows 11 Pro build 26200, PowerShell 7.6.6, Windows OpenSSH
 - OpenOCD: `0.12.0+dev-gb04ccfe-dirty`
-- Vivado and `hw_server`: not installed/found on gusta-desktop; no version is
-  available to record. Windows reports only `C:` and `D:` filesystem drives;
-  `C:\Xilinx`, `D:\Xilinx`, and the previously suspected `F:\Xilinx` are
-  absent. Recursive checks under the existing `D:\AMDDesignTools` and
-  `D:\Xilinx_2025.2` found no `vivado.bat` or `hw_server.bat`.
+- Vivado: v2025.2, SW Build 6299465, at
+  `D:\AMDDesignTools\2025.2\Vivado`; bundled `hw_server.exe` runs from its
+  `bin\unwrapped\win64.o` directory and listens on localhost TCP 3121.
 - UART service: `~/ebaz4205-jtag/uart/uart-bridge.py`; replay TCP 2217, live TCP 2218
 - UART cron tag: `ebaz4205-jtag:uart-bridge`
 - OpenOCD source/build: `~/source/openocd-ebaz`
@@ -43,8 +41,11 @@ entries proved remove/add preserves them and repeated add is idempotent. The
 script also replaces the former `link-test:uart-bridge` tag. Clients connected
 and disconnected on both ports. I replayed the exact delayed `@reboot` command
 body: after its 20-second delay exactly one supervisor and bridge appeared,
-and both ports listened. `sudo -n reboot` was denied because the account
-requires a password, so an actual hardware reboot remains unverified.
+and both ports listened. After the user rebooted for the kernel update, boot
+time was 2026-09-23 17:14:43 UTC and the kernel is
+`6.18.53-current-sunxi`. The tagged cron entry survived; exactly one supervisor
+and bridge returned, and both listeners (2217/2218) are active. Two physical
+IDCODE scans passed at 100 kHz after reboot and reported `restored=yes`.
 
 ### 2. UART service failure behavior
 
@@ -87,7 +88,8 @@ controller remains present when its signal wire is unplugged. After deploying
 the fix, restarted the live service and verified one supervisor, one bridge,
 and both listeners on ports 2217/2218. The recovery test creates the missing
 PTY path after repeated startup failures, then verifies bridge startup, live
-data delivery, and continued supervisor operation.
+data delivery, and continued supervisor operation. After the kernel update and
+reboot, the same Linux PTY suite passed 10/10 on `gusta-bpi`.
 
 ### 3. XVC protocol, Vivado, ownership handoff, and OpenOCD recovery
 
@@ -100,6 +102,25 @@ data delivery, and continued supervisor operation.
   finish OpenOCD, start XVC, connect/disconnect, stop XVC.
 - Record Vivado/hw_server versions, LAN addresses, exact connect commands,
   XVC port/firewall state, chain IDs, and whether XVC releases GPIO ownership.
+
+Exact real-client check used after the Pi reboot:
+
+```powershell
+# gusta-bpi
+sudo -n /usr/local/libexec/ebaz-xvc-server --port 2542 --rate-khz 1000
+
+# gusta-desktop PowerShell, in a second terminal
+ssh -N -L 127.0.0.1:2543:127.0.0.1:2542 gusta-bpi
+
+# Vivado v2025.2 PowerShell
+& 'D:\AMDDesignTools\2025.2\Vivado\bin\vivado.bat' -mode batch `
+  -source "$env:TEMP\ebaz-check-vivado-xvc.tcl" `
+  -tclargs 127.0.0.1:2543 -nojournal -nolog
+```
+
+Copy the checked-in `jtag/xvc/check-vivado-xvc.tcl` to the desktop temp path
+before running this sequence. The XVC server must be stopped cleanly before
+starting OpenOCD.
 
 **Status:** fake XVC protocol suite passed 32/32 on gusta-bpi. The production
 XVC binary was verified to match the compiled package source. Physical XVC
@@ -114,16 +135,27 @@ IDCODE passed 2/2; after stopping XVC, canonical OpenOCD `make probe` passed
 again. Fake XVC also passed end-to-end through the documented SSH local-forward
 started from Windows PowerShell; the desktop received `xvcServer_v1.0:32768`
 from the Pi's loopback-only server.
-Vivado remains untested because neither Vivado nor `hw_server` is installed on
-the desktop. A fresh check found only `C:` and `D:` mounted; `F:\Xilinx` (the
-path suggested by a stale Xilinx driver registry entry) is absent. Recursive
-checks of `D:\AMDDesignTools` and `D:\Xilinx_2025.2` found no `vivado.bat` or
-`hw_server.bat`.
+Vivado v2025.2 batch mode passed through a Windows SSH tunnel to the Pi XVC
+server. Tcl `open_hw_target -xvc_url 127.0.0.1:2543` discovered `arm_dap_0`
+(`0x4ba00477`) and `xc7z010_1` (`0x13722093`); checked-in read-only script
+`jtag/xvc/check-vivado-xvc.tcl` repeats this check and passed with exit 0. The
+same Vivado session programmed the known-good shared-drive bitstream
+`D:\SHARED-DATA\FPGA\personal\real-projects\ebaz4205-jtag-rpi-setup\hardware\ebaz_test.bit`
+(2,083,870 bytes, SHA-256
+`99e1416352c7f1778a8576ba0c1ce8980a61ac835b973710bc745f1da9ba3132`, target
+`7z010clg400`). `program_hw_devices` exited 0 and reported `End of startup
+status: HIGH`; `refresh_hw_device` confirmed the programmed `xc7z010`.
 
-AMD's documented XVC workflow is to add a Xilinx Virtual Cable in Vivado
-Hardware Manager and specify its host and port. Our server intentionally binds
-only to Pi localhost, so the remote desktop must use SSH local forwarding; see
-[AMD PG195](https://docs.amd.com/r/en-US/pg195-pcie-dma/Connecting-the-Vivado-Design-Suite-to-the-XVC-Server-Application).
+Cleanup is still pending: Vivado closed its target, but the root XVC server
+remains active as PID 1862 on the Pi and owns the GPIO lines. A noninteractive
+`sudo -n /bin/kill -TERM 1862` was denied because it requires a password. Do
+not start OpenOCD until the server receives SIGTERM interactively and logs
+`stopped, pins restored`; then run `make probe` to verify post-program recovery.
+
+AMD documents both the Hardware Manager XVC connection flow and Tcl
+`open_hw_target -xvc_url`; our server binds only to Pi localhost, so the remote
+desktop uses SSH local forwarding. See [AMD PG195](https://docs.amd.com/r/en-US/pg195-pcie-dma/Connecting-the-Vivado-Design-Suite-to-the-XVC-Server-Application)
+and [UG835](https://docs.amd.com/r/en-US/ug835-vivado-tcl-commands/open_hw_target).
 
 ### 4. OpenOCD source move and installer lookup
 

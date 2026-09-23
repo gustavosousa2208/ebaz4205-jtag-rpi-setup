@@ -32,6 +32,18 @@ ssh -N -L 2542:127.0.0.1:2542 gusta-bpi
 In Hardware Manager, open a local hardware server, add an XVC cable at
 `127.0.0.1:2542`, then open the target. AMD documents this XVC target workflow
 in [PG195](https://docs.amd.com/r/en-US/pg195-pcie-dma/Connecting-the-Vivado-Design-Suite-to-the-XVC-Server-Application).
-See [the hardening matrix](../../docs/probe-hardening.md) for the tested
-ownership handoff and outstanding Vivado check. Stop the server with Ctrl-C
-and wait for its `stopped, pins restored` message before using OpenOCD.
+For a repeatable, read-only device discovery check from a Vivado command
+prompt, run:
+
+```sh
+vivado -mode batch -source check-vivado-xvc.tcl -tclargs 127.0.0.1:2542
+```
+
+The Tcl script opens the local `hw_server`, connects to XVC, and requires both
+Zynq TAP IDCODEs (`0x4ba00477` and `0x13722093`) before reporting success. AMD
+documents the `open_hw_target -xvc_url` Tcl command in
+[UG835](https://docs.amd.com/r/en-US/ug835-vivado-tcl-commands/open_hw_target).
+See [the hardening matrix](../../docs/probe-hardening.md) for tested Vivado
+client discovery, programming, ownership handoff, and remaining cleanup checks.
+Stop the server with Ctrl-C and wait for its `stopped, pins restored` message
+before using OpenOCD.
