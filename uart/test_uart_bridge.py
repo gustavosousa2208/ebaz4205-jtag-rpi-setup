@@ -214,6 +214,43 @@ class UartBridgeTests(unittest.TestCase):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", candidate))
 
+    def test_supervisor_recovers_when_serial_device_appears(self):
+        master, slave, device = self.pty_pair()
+        tempdir = tempfile.TemporaryDirectory(prefix="uart-reconnect-test-")
+        self.tempdirs.append(tempdir)
+        missing_device = Path(tempdir.name) / "serial"
+        port, live_port = free_port(), free_port()
+        env = dict(os.environ, UART_RESTART_DELAY="0.1")
+        process = subprocess.Popen(
+            ["/bin/sh", str(Path(__file__).with_name("run-bridge.sh")),
+             "--device", str(missing_device), "--listen", "127.0.0.1",
+             "--port", str(port), "--live-port", str(live_port)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            start_new_session=True, env=env)
+        self.processes.append(process)
+        time.sleep(0.4)
+        self.assertIsNone(process.poll(), "supervisor exited while device was absent")
+        os.symlink(device, missing_device)
+
+        deadline = time.monotonic() + 5
+        started = False
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.fail("supervisor exited instead of recovering the device")
+            ready, _, _ = select.select([process.stdout], [], [], 0.05)
+            if ready and " -> tcp " in process.stdout.readline():
+                started = True
+                break
+        self.assertTrue(started, "supervisor did not start bridge after device appeared")
+        os.close(slave)
+        self.slave_fds.remove(slave)
+
+        client = self.connect(live_port)
+        os.write(master, b"recovered")
+        self.assertEqual(client.recv(9), b"recovered")
+        self.assertIsNone(process.poll(), "supervisor exited after device recovery")
+        client.close()
+
     def test_supervisor_termination_stops_active_bridge_and_releases_ports(self):
         _, slave, device = self.pty_pair()
         port, live_port = free_port(), free_port()
