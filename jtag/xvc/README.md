@@ -15,3 +15,23 @@ Install or remove its narrow sudo rule on the Banana Pi with
 the production OpenOCD uploader against the probe at the same time. Prototype
 logs from the previous `link-test` folder are preserved in
 `jtag/lab/link-test/xvc/`.
+
+The server binds to `127.0.0.1` only. Start it in a Banana Pi terminal:
+
+```sh
+sudo -n /usr/local/libexec/ebaz-xvc-server --port 2542 --rate-khz 1000
+```
+
+Keep it running, then start this tunnel on the Vivado computer (Windows
+PowerShell supports the same OpenSSH command):
+
+```sh
+ssh -N -L 2542:127.0.0.1:2542 gusta-bpi
+```
+
+In Hardware Manager, open a local hardware server, add an XVC cable at
+`127.0.0.1:2542`, then open the target. AMD documents this XVC target workflow
+in [PG195](https://docs.amd.com/r/en-US/pg195-pcie-dma/Connecting-the-Vivado-Design-Suite-to-the-XVC-Server-Application).
+See [the hardening matrix](../../docs/probe-hardening.md) for the tested
+ownership handoff and outstanding Vivado check. Stop the server with Ctrl-C
+and wait for its `stopped, pins restored` message before using OpenOCD.

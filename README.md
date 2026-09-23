@@ -80,6 +80,8 @@ See [jtag/README.md](jtag/README.md) for adapter setup, rate fallback, stress
 results, recovery, and diagnostic details. The Banana Pi UART bridge lives in
 [`uart/`](uart/README.md); XVC support and its Vivado follow-up are tracked
 under [`jtag/xvc/`](jtag/xvc/README.md) and Bead `ebaz4205-71t.1`.
+The operational failure/recovery test matrix is
+[docs/probe-hardening.md](docs/probe-hardening.md).
 
 ## Project layout
 

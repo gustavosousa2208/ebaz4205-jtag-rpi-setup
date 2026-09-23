@@ -1,0 +1,129 @@
+# Probe package hardening protocol
+
+Track execution in Bead `ebaz4205-71t.2`; this document defines the repeatable
+cases and records observed results. Do not run XVC and the production OpenOCD
+uploader at the same time: both own the physical JTAG pins.
+
+## Test environment
+
+- Canonical package: `~/ebaz4205-jtag` on gusta-bpi; this hardening change is
+  being developed for the next commit.
+- UART service: `~/ebaz4205-jtag/uart/uart-bridge.py`; replay TCP 2217, live TCP 2218
+- UART cron tag: `ebaz4205-jtag:uart-bridge`
+- OpenOCD source/build: `~/source/openocd-ebaz`
+- XVC source: `~/ebaz4205-jtag/jtag/xvc/`
+- Preserve OpenOCD's pre-existing `src/jtag/drivers/linuxgpiod.c` modification and
+  untracked `doc/openocd.info-3` file in every case.
+
+## Cases and results
+
+### 1. UART cron ownership, reboot, and recovery
+
+1. Record `crontab -l`, `uart/pi-cron.sh status`, service PID, and listeners.
+2. Run `uart/pi-cron.sh remove`; verify only the tagged line is removed and
+   unrelated cron entries are byte-for-byte unchanged. Re-add with
+   `uart/pi-cron.sh add`; verify exactly one tagged line.
+3. Reboot the Pi. Verify after boot that exactly one bridge process is running,
+   ports 2217 and 2218 are listening, and the cron line still targets
+   `~/ebaz4205-jtag/uart`.
+4. Connect and disconnect clients on both ports; verify the service remains up.
+
+**Status:** the live crontab had only the project line; removing it left no
+entries and adding restored exactly one. A synthetic crontab with unrelated
+entries proved remove/add preserves them and repeated add is idempotent. The
+script also replaces the former `link-test:uart-bridge` tag. Clients connected
+and disconnected on both ports. `sudo -n reboot` was denied because the account
+requires a password; actual startup after reboot remains unverified. The
+supervisor restart-on-failure behavior is covered in the integration suite,
+but it does not replace a real reboot check.
+
+### 2. UART service failure behavior
+
+Use alternate TCP ports so production listeners stay available. The repeatable
+Linux PTY suite is `python3 -m unittest -v uart/test_uart_bridge.py`. Record
+exit codes, logs, and whether any listener leaks remain.
+
+- Missing serial device: start with `--device /dev/does-not-exist` and alternate
+  ports; expect a clear failure and no leftover listener.
+- Port collision: occupy one alternate port, start the bridge, and verify clean
+  failure with no listener left on the other port.
+- Read-only contract: send client bytes to the default bridge and confirm they
+  are discarded; confirm only explicit `--allow-write` enables serial writes.
+- Serial removal/recovery: the bridge retries reopening after `EIO`/`ENODEV`,
+  including if the path is temporarily absent. Unit-test transient reopen
+  failures; perform a real unplug/replug check only with an isolated UART.
+  Closing a PTY master did not trigger the same error signal on this kernel, so
+  it is not evidence of physical UART unplug behavior. Do not detach production
+  `/dev/ttyS3`.
+- Client disconnect: disconnect replay and live clients during traffic and
+  confirm the service continues accepting clients.
+
+**Status:** Linux PTY suite passed 8/8 on gusta-bpi. It uses alternate ports and
+PTYs and covers startup failure, listener cleanup, port collision, replay/live,
+read-only default, explicit write mode, duplicate serial-owner rejection,
+client disconnect, serial-open retry, and supervisor retry. A closed PTY master
+did not generate `EIO` on this kernel;
+that setup cannot represent physical UART removal. The Pi's onboard UART
+controller remains present when its signal wire is unplugged.
+
+### 3. XVC protocol, Vivado, ownership handoff, and OpenOCD recovery
+
+- Run `jtag/xvc/test_xvc.py` against the XVC server in `--fake` mode. This
+  covers protocol framing, fragmented requests, varied/non-byte-aligned scans,
+  and maximum vector size without hardware.
+- On the Pi, connect Vivado Hardware Manager from `gusta-desktop`, identify both
+  Zynq TAPs, then disconnect XVC before starting production OpenOCD.
+- Upload/probe through OpenOCD after XVC exits. Repeat in the opposite order:
+  finish OpenOCD, start XVC, connect/disconnect, stop XVC.
+- Record Vivado/hw_server versions, LAN addresses, exact connect commands,
+  XVC port/firewall state, chain IDs, and whether XVC releases GPIO ownership.
+
+**Status:** fake XVC protocol suite passed 32/32 on gusta-bpi. The production
+XVC binary was verified to match the compiled package source. Physical XVC
+IDCODE scan passed 5/5 (`0x13722093`, `0x4ba00477`); after gracefully stopping
+XVC, canonical `make probe` found both TAPs and examined both Cortex-A9 cores.
+The reverse sequence also passed: OpenOCD probe first, then XVC IDCODE scans
+passed 3/3. Each handoff stopped the current owner before starting the other.
+With OpenOCD intentionally holding the GPIO lines, a concurrent XVC start
+failed at the kernel line request with `Device or resource busy` (exit 2),
+before XVC touched the pins. Fake XVC also passed end-to-end through an SSH
+local-forward started from Windows PowerShell; the desktop received
+`xvcServer_v1.0:32768` from the Pi's loopback-only server.
+Vivado remains untested:
+`vivado` and `hw_server` are absent from PATH, `C:\Xilinx` is absent, and
+`D:\Xilinx_2025.2` contains no `vivado.bat` or `hw_server.bat`.
+
+AMD's documented XVC workflow is to add a Xilinx Virtual Cable in Vivado
+Hardware Manager and specify its host and port. Our server intentionally binds
+only to Pi localhost, so the remote desktop must use SSH local forwarding; see
+[AMD PG195](https://docs.amd.com/r/en-US/pg195-pcie-dma/Connecting-the-Vivado-Design-Suite-to-the-XVC-Server-Application).
+
+### 4. OpenOCD source move and installer lookup
+
+- Verify `~/source/openocd-ebaz/src/openocd` is executable and the pre-existing
+  dirty/untracked files remain present.
+- Inspect the installer lookup in `jtag/install-mmio-runner`; it must resolve
+  the source binary from `$runner_home/source/openocd-ebaz/src/openocd`.
+- Verify installed `/usr/local/libexec/openocd-ebaz-mmio` remains executable.
+- Exercise `sudo ./jtag/install-mmio-runner` only during a controlled window;
+  then verify the installed binary and `sudo -n` runner rule. Do not rebuild or
+  overwrite the moved checkout as part of this path check.
+
+**Status:** `~/source/openocd-ebaz/src/openocd` is executable, the original
+modified/untracked source files remain unchanged, and the installed OpenOCD
+binary completed a canonical physical probe after the move. Installer source
+lookup now points to the moved checkout. Running the privileged installer
+itself remains unverified because non-interactive sudo does not allow that
+installer command.
+
+### 5. Fresh-agent discoverability
+
+Starting at the repository root, follow only `README.md` and its links. Verify a
+new agent can locate: production JTAG commands, UART service/setup/status and
+remove/re-add commands, XVC build/install instructions, the simultaneous-owner
+warning, lab archive location, Beads Vivado task, and the OpenOCD source path.
+
+**Status:** README links to the UART guide, XVC guide, and this test matrix;
+the guides expose the production commands, cron status/remove/add commands,
+source path, one-owner warning, and related Beads. Manual README link walk
+passed. See Bead `ebaz4205-71t.1` for Vivado compatibility.

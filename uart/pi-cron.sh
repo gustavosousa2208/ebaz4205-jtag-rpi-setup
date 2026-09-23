@@ -7,14 +7,15 @@
 set -euo pipefail
 
 tag='ebaz4205-jtag:uart-bridge'
+legacy_tag='link-test:uart-bridge'
 # `cd ...; cmd &` (not `cd && cmd &`): backgrounding a && chain would keep cron's output pipe open.
-line='@reboot sleep 20; cd "$HOME/ebaz4205-jtag/uart" || exit 0; setsid nohup python3 uart-bridge.py >> logs/uart-bridge.log 2>&1 < /dev/null &  # '"$tag"
+line='@reboot sleep 20; cd "$HOME/ebaz4205-jtag/uart" || exit 0; setsid nohup ./run-bridge.sh >> logs/uart-bridge.log 2>&1 < /dev/null &  # '"$tag"
 current=$(crontab -l 2>/dev/null || true)
-strip() { printf '%s\n' "$current" | grep -v "$tag" || true; }
+strip() { printf '%s\n' "$current" | grep -v -E "$tag|$legacy_tag" || true; }
 
 case "${1:-status}" in
     status)
-        crontab -l 2>/dev/null | grep "$tag" || echo "cron line not installed" ;;
+        crontab -l 2>/dev/null | grep -E "$tag|$legacy_tag" || echo "cron line not installed" ;;
     add)
         { strip; echo "$line"; } | grep -v '^$' | crontab -
         echo "cron line installed:"; crontab -l | grep "$tag" ;;

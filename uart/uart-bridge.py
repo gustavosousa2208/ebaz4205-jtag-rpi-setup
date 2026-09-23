@@ -10,6 +10,7 @@ Only this process should open the serial device (do not run uart-capture.py at t
 """
 import argparse
 import errno
+import fcntl
 import os
 import select
 import socket
@@ -19,22 +20,39 @@ import time
 
 BAUDS = {9600: termios.B9600, 19200: termios.B19200, 38400: termios.B38400,
          57600: termios.B57600, 115200: termios.B115200, 230400: termios.B230400}
+REOPEN_DELAY = 1.0
 
 
 def open_serial(dev, baud):
     fd = os.open(dev, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    attrs = termios.tcgetattr(fd)
-    attrs[0] = 0                                                   # iflag: raw
-    attrs[1] = 0                                                   # oflag
-    attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL       # cflag: 8N1, no flow control
-    attrs[3] = 0                                                   # lflag: no echo/canonical
-    attrs[4] = attrs[5] = BAUDS[baud]
-    attrs[6] = list(attrs[6])
-    attrs[6][termios.VMIN] = 0
-    attrs[6][termios.VTIME] = 0
-    termios.tcsetattr(fd, termios.TCSANOW, attrs)
-    termios.tcflush(fd, termios.TCIFLUSH)
-    return fd
+    try:
+        fcntl.ioctl(fd, termios.TIOCEXCL)
+        attrs = termios.tcgetattr(fd)
+        attrs[0] = 0                                                   # iflag: raw
+        attrs[1] = 0                                                   # oflag
+        attrs[2] = termios.CS8 | termios.CREAD | termios.CLOCAL       # cflag: 8N1, no flow control
+        attrs[3] = 0                                                   # lflag: no echo/canonical
+        attrs[4] = attrs[5] = BAUDS[baud]
+        attrs[6] = list(attrs[6])
+        attrs[6][termios.VMIN] = 0
+        attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+        termios.tcflush(fd, termios.TCIFLUSH)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def reopen_serial(dev, baud):
+    """Keep the TCP listeners alive while a detached UART device returns."""
+    while True:
+        try:
+            return open_serial(dev, baud)
+        except OSError as e:
+            print('serial reopen failed (%s), retrying in %.1fs' % (e, REOPEN_DELAY),
+                  flush=True)
+            time.sleep(REOPEN_DELAY)
 
 
 def listener(host, port):
@@ -102,7 +120,7 @@ def main():
                         except OSError:
                             pass
                         time.sleep(1)
-                        fd = open_serial(args.device, args.baud)
+                        fd = reopen_serial(args.device, args.baud)
                         continue
                     raise
                 if data:
@@ -133,3 +151,6 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         sys.exit(0)
+    except OSError as e:
+        print('uart-bridge: startup failed: %s' % e, file=sys.stderr, flush=True)
+        sys.exit(1)
