@@ -153,6 +153,8 @@ class UartBridgeTests(unittest.TestCase):
         client.close()
         self.assertIsNone(process.poll())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"),
+                         "TIOCEXCL duplicate-open behavior is Linux-specific")
     def test_second_bridge_cannot_steal_same_serial_device(self):
         _, slave, device = self.pty_pair()
         process, _, _ = self.start_bridge(device)
@@ -208,6 +210,36 @@ class UartBridgeTests(unittest.TestCase):
         output = process.stdout.read()
         self.assertGreaterEqual(output.count("startup failed"), 2, output)
         self.assertIn("retrying in 0.1s", output)
+        for candidate in (port, live_port):
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", candidate))
+
+    def test_supervisor_termination_stops_active_bridge_and_releases_ports(self):
+        _, slave, device = self.pty_pair()
+        port, live_port = free_port(), free_port()
+        process = subprocess.Popen(
+            ["/bin/sh", str(Path(__file__).with_name("run-bridge.sh")),
+             "--device", device, "--listen", "127.0.0.1", "--port", str(port),
+             "--live-port", str(live_port)],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            start_new_session=True)
+        self.processes.append(process)
+        deadline = time.monotonic() + 5
+        started = False
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.fail("supervisor exited before bridge startup")
+            ready, _, _ = select.select([process.stdout], [], [], 0.05)
+            if ready and process.stdout.readline().startswith("uart-bridge:"):
+                started = True
+                break
+        self.assertTrue(started, "supervised bridge did not start")
+        os.close(slave)
+        self.slave_fds.remove(slave)
+
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=3)
+        self.assertEqual(process.returncode, 0)
         for candidate in (port, live_port):
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", candidate))
