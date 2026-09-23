@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture a UART without reopening it after configuring termios."""
+"""Capture a UART from a serial device or TCP bridge."""
 
 import os
 import socket
@@ -44,8 +44,8 @@ while time.time() < deadline:
     try:
         data = reader.recv(4096) if reader else os.read(fd, 4096)
     except (BlockingIOError, TimeoutError, socket.timeout):
-        data = b""
-    if reader and not data:
+        data = None
+    if reader and data == b"":
         break
     if data:
         os.write(sys.stdout.fileno(), data)
