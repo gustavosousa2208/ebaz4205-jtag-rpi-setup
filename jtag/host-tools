@@ -54,7 +54,7 @@ ebaz_init_host() {
         fi
     fi
 
-    if [ -z "${EBAZ_UART_DEVICE:-}" ]; then
+    if [ -z "${EBAZ_UART_DEVICE:-}" ] && [ -z "${EBAZ_UART_TCP:-}" ]; then
         if [ "$EBAZ_HOST_OS" = Darwin ]; then
             for candidate in /dev/cu.usbserial-*; do
                 if [ -e "$candidate" ]; then
@@ -65,7 +65,7 @@ ebaz_init_host() {
         elif { [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-gpio ] ||
                [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; } &&
              [ -e /dev/ttyS3 ]; then
-            EBAZ_UART_DEVICE=/dev/ttyS3
+            EBAZ_UART_TCP=127.0.0.1:2218
         elif [ -e /dev/ttyUSB0 ]; then
             EBAZ_UART_DEVICE=/dev/ttyUSB0
         fi
@@ -73,7 +73,7 @@ ebaz_init_host() {
 
     export EBAZ_HOST_OS EBAZ_OPENOCD EBAZ_OPENOCD_SCRIPTS EBAZ_PLD_DEVICE
     export EBAZ_USE_SUDO
-    export EBAZ_UART_DEVICE
+    export EBAZ_UART_DEVICE EBAZ_UART_TCP
 }
 
 ebaz_abs_path() {

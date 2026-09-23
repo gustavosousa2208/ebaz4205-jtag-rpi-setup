@@ -240,6 +240,12 @@ The capture helper keeps one serial descriptor open while configuring and
 reading it; this avoids macOS resetting the FTDI baud rate when a second
 program opens the device.
 
+On gusta-bpi, the reboot-started UART bridge owns `/dev/ttyS3` exclusively.
+JTAG uploads therefore capture from its live TCP endpoint at `127.0.0.1:2218`
+instead of opening the serial device a second time. This starts listening
+before programming, so the capture contains output from that run and excludes
+old replay history.
+
 OpenOCD is stopped automatically after the requested UART capture, so the
 command returns without `Ctrl-C`. Use `--keep-openocd` only when intentionally
 keeping the debugger attached for a later fast ELF-only upload.

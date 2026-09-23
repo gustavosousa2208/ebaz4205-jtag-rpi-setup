@@ -244,12 +244,25 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if $capture_uart && [ -n "${EBAZ_UART_DEVICE:-}" ] && [ -e "$EBAZ_UART_DEVICE" ]; then
-    python3 "$bundle_dir/uart-capture.py" "$EBAZ_UART_DEVICE" 3600 \
+uart_capture_source=""
+if [ -n "${EBAZ_UART_TCP:-}" ]; then
+    uart_capture_source="tcp://${EBAZ_UART_TCP}"
+elif [ -n "${EBAZ_UART_DEVICE:-}" ] && [ -e "$EBAZ_UART_DEVICE" ]; then
+    uart_capture_source=$EBAZ_UART_DEVICE
+fi
+
+if $capture_uart && [ -n "$uart_capture_source" ]; then
+    python3 "$bundle_dir/uart-capture.py" "$uart_capture_source" 3600 \
         >"$uart_log" 2>&1 &
     uart_pid=$!
     sleep 0.2
-    echo "uart_capture=$EBAZ_UART_DEVICE,115200 -> $uart_log" | tee -a "$log_file"
+    if kill -0 "$uart_pid" 2>/dev/null; then
+        echo "uart_capture=$uart_capture_source -> $uart_log" | tee -a "$log_file"
+    else
+        wait "$uart_pid" || true
+        uart_pid=""
+        echo "uart_capture=failed to start; see $uart_log" | tee -a "$log_file"
+    fi
 elif $capture_uart; then
     echo "uart_capture=skipped (no serial device found)" | tee -a "$log_file"
 else
