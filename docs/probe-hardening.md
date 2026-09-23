@@ -6,7 +6,7 @@ uploader at the same time: both own the physical JTAG pins.
 
 ## Test environment
 
-- Canonical package: `~/ebaz4205-jtag`, commit `b246c3d`
+- Canonical package: `~/ebaz4205-jtag`, commit `8b41b24`
 - Banana Pi: Armbian 26.11.0-trunk.57 (Debian 13 trixie), Linux
   `6.18.52-current-sunxi` on armv7l
 - Desktop: Windows 11 Pro build 26200, PowerShell 7.6.6, Windows OpenSSH
@@ -91,9 +91,11 @@ The reverse sequence also passed: OpenOCD probe first, then XVC IDCODE scans
 passed 3/3. Each handoff stopped the current owner before starting the other.
 With OpenOCD intentionally holding the GPIO lines, a concurrent XVC start
 failed at the kernel line request with `Device or resource busy` (exit 2),
-before XVC touched the pins. Fake XVC also passed end-to-end through an SSH
-local-forward started from Windows PowerShell; the desktop received
-`xvcServer_v1.0:32768` from the Pi's loopback-only server.
+before XVC touched the pins. Once OpenOCD exited, XVC reacquired the pins and
+IDCODE passed 2/2; after stopping XVC, canonical OpenOCD `make probe` passed
+again. Fake XVC also passed end-to-end through the documented SSH local-forward
+started from Windows PowerShell; the desktop received `xvcServer_v1.0:32768`
+from the Pi's loopback-only server.
 Vivado remains untested:
 `vivado` and `hw_server` are absent from PATH, `C:\Xilinx` is absent, and
 `D:\Xilinx_2025.2` contains no `vivado.bat` or `hw_server.bat`.
