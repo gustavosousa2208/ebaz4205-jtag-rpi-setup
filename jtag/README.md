@@ -200,9 +200,10 @@ order, stages it in DDR, and verifies the full image with the Cortex-A target
 CRC before programming. It requires the local OpenOCD build with MMIO support
 and keeps the GDB server on localhost because this OpenOCD version needs its
 GDB service during target-side CRC execution. A tested 2,083,700-byte image,
-PL load, and ELF start took 36.6 seconds at 1 MHz and an 8-clock DAP delay.
-The older zero-delay / 1.5 MHz experiment took 27.4 seconds but generated DAP
-WAIT retries, so it is not the default.
+PL load, and ELF start took 34.2 seconds at 1 MHz and a 4-clock DAP delay,
+with no DAP WAIT retries. An 8-clock delay took 36.7 seconds without retries;
+zero delay took 31.3 seconds but generated many retries, so 4 clocks is the
+current default.
 
 After resetting or power-cycling the board, explicitly start a new hardware
 session:
