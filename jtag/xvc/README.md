@@ -47,3 +47,23 @@ See [the hardening matrix](../../docs/probe-hardening.md) for tested Vivado
 client discovery, programming, ownership handoff, and remaining cleanup checks.
 Stop the server with Ctrl-C and wait for its `stopped, pins restored` message
 before using OpenOCD.
+
+## LAN mode (no tunnel)
+
+`--bind IPV4` makes the server listen on a chosen address instead of
+`127.0.0.1`. `start-xvc.ps1` wraps this for the Vivado computer:
+
+```powershell
+.\jtag\xvc\start-xvc.ps1 [-Pi gusta-bpi] [-Port 2542] [-RateKhz 1000]
+```
+
+It checks over SSH that the server and its sudoers rule are installed and that
+the installed binary supports `--bind` (otherwise it prints the build and
+`sudo ./install-xvc.sh` commands to run on the Pi), refuses to start if OpenOCD
+or another XVC server holds the probe, finds the Pi's LAN IP from its default
+route, and runs the server bound to that IP. Then add an XVC cable at
+`<printed IP>:2542` in Hardware Manager; no `ssh -L` is needed. Ctrl-C stops it.
+
+**Security:** XVC has no authentication and the server runs as root, so anyone
+who can reach that address and port can drive the JTAG pins. Use it only on a
+trusted LAN. Without `--bind` the server stays loopback-only.

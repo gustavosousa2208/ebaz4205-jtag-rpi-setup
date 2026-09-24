@@ -10,7 +10,9 @@
  *   - bounds-checks every length and closes the connection on any protocol violation,
  *   - never executes or interprets client data, it only toggles four pins.
  *
- * usage: ebaz-xvc-server [--port N] [--rate-khz N] [--fake]
+ * usage: ebaz-xvc-server [--port N] [--rate-khz N] [--bind IPV4] [--fake]
+ *   --bind   listen on this IPv4 address instead of 127.0.0.1. XVC has no authentication, so
+ *            anyone who can reach that address can drive the JTAG pins: trusted LANs only.
  *   --fake   no hardware and no root: TDO is TDI delayed by one bit (for protocol tests).
  */
 #define _POSIX_C_SOURCE 200809L
@@ -275,6 +277,8 @@ static void serve(int fd)
 int main(int argc, char **argv)
 {
 	unsigned long port = 2542, rate_khz = 1000;
+	const char *bind_ip = "127.0.0.1";
+	struct in_addr bind_addr = { .s_addr = htonl(INADDR_LOOPBACK) };
 	for (int i = 1; i < argc; ++i) {
 		char *end;
 		if (!strcmp(argv[i], "--fake")) {
@@ -285,8 +289,11 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "--rate-khz") && i + 1 < argc) {
 			rate_khz = strtoul(argv[++i], &end, 10);
 			if (*end || rate_khz == 0 || rate_khz > 10000) { fprintf(stderr, "bad --rate-khz (1..10000)\n"); return 2; }
+		} else if (!strcmp(argv[i], "--bind") && i + 1 < argc) {
+			bind_ip = argv[++i];
+			if (inet_pton(AF_INET, bind_ip, &bind_addr) != 1) { fprintf(stderr, "bad --bind (IPv4 address)\n"); return 2; }
 		} else {
-			fprintf(stderr, "usage: %s [--port N] [--rate-khz N] [--fake]\n", argv[0]);
+			fprintf(stderr, "usage: %s [--port N] [--rate-khz N] [--bind IPV4] [--fake]\n", argv[0]);
 			return 2;
 		}
 	}
@@ -307,14 +314,14 @@ int main(int argc, char **argv)
 	int one = 1;
 	setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 	struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons((uint16_t)port) };
-	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);          /* localhost only, on purpose */
+	addr.sin_addr = bind_addr;                              /* loopback unless --bind is given */
 	if (bind(srv, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(srv, 1) != 0) {
-		perror("bind/listen 127.0.0.1");
+		perror("bind/listen");
 		restore_pins();
 		return 2;
 	}
-	printf("xvc-server: %s, listening on 127.0.0.1:%lu, rate %lu kHz, max vector %u bytes\n",
-	       fake ? "FAKE mode (no hardware)" : "Port C GPIO (TDI=PC0 TDO=PC1 TCK=PC2 TMS=PC3)", port, rate_khz, MAX_VECTOR_BYTES);
+	printf("xvc-server: %s, listening on %s:%lu, rate %lu kHz, max vector %u bytes\n",
+	       fake ? "FAKE mode (no hardware)" : "Port C GPIO (TDI=PC0 TDO=PC1 TCK=PC2 TMS=PC3)", bind_ip, port, rate_khz, MAX_VECTOR_BYTES);
 	fflush(stdout);
 
 	while (!stop_requested) {
