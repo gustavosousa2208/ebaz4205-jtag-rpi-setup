@@ -10,6 +10,7 @@ CC := $(CROSS_COMPILE)gcc
 SIZE := $(CROSS_COMPILE)size
 CFLAGS := -mcpu=cortex-a9 -marm -O2 -g -ffreestanding -fno-builtin \
 	-ffunction-sections -fdata-sections -Wall -Wextra
+CFLAGS += $(EXTRA_CFLAGS)
 LDFLAGS := -T $(APP_DIR)/linker.ld -nostdlib -Wl,--gc-sections \
 	-Wl,-Map=$(BUILD_DIR)/hello.map
 

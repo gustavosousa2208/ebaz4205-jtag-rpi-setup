@@ -37,9 +37,15 @@ static void uart_put_u32(uint32_t value)
     }
 }
 
+/* Heartbeat period. With the caches off this is far slower than 1 s; debug
+ * tests build with a small value, e.g. make EXTRA_CFLAGS=-DHEARTBEAT_DELAY=1000000. */
+#ifndef HEARTBEAT_DELAY
+#define HEARTBEAT_DELAY 100000000u
+#endif
+
 static void delay(void)
 {
-    for (volatile uint32_t i = 0; i < 100000000u; ++i) {
+    for (volatile uint32_t i = 0; i < HEARTBEAT_DELAY; ++i) {
         __asm__ volatile ("nop");
     }
 }

@@ -102,6 +102,28 @@ vivado -mode batch -nojournal -nolog -source tools/vivado-compress-bitstream.tcl
 `EBAZ_PCAP_KHZ` and `EBAZ_DAP_MEMACCESS` override the PCAP path's fixed
 1000 kHz and 4-clock defaults.
 
+## ELF first, bitstream later, and debugging (Pi)
+
+The application does not depend on the PL, so the ELF can run before the
+bitstream is loaded and the PL can be programmed later without restarting it.
+`jtag/elf-first-test.py` proves this on hardware with one resident OpenOCD:
+PS init, PL cleared, ELF started with no bitstream, then a compressed bitstream
+loaded at 2000 kHz in 3.7 s while the program runs (the UART heartbeat keeps
+counting and is not reset), then debugging through OpenOCD (halt, hardware
+breakpoint, single-step, memory reads) and `gdb-multiarch` (source-level
+backtrace and breakpoint arguments). 11/11 checks passed on 2026-09-26.
+
+```sh
+make BUILD_DIR=/tmp/fastbuild EXTRA_CFLAGS=-DHEARTBEAT_DELAY=2000000
+python3 jtag/elf-first-test.py path/to/design.bit 2000 /tmp/fastbuild/hello.elf
+```
+
+The default `HEARTBEAT_DELAY` (100 million iterations) is far slower than 1 s
+with the caches off, so use the short build when you need to see progress.
+Attach gdb with `gdb-multiarch -ex 'set architecture arm' -ex 'target
+extended-remote localhost:3333' build/hello.elf`. After `detach` the core stays
+halted; send `resume` to OpenOCD. CPU0 is the SMP target, so gdb sees one core.
+
 ## Other adapters
 
 macOS defaults to CMSIS-DAP. Linux GPIO remains the correctness fallback:
