@@ -1,0 +1,31 @@
+#!/bin/sh
+# Install a locally built OpenOCD as the root-owned Raspberry Pi runner.
+#
+# The OpenOCD binary tracked in jtag/bin (and the distro package) corrupts
+# DAP traffic on the Pi 4 during multi-megabyte transfers. A build made on the
+# Pi itself passed 10/10 2 MB DDR loads at 1000 and 2000 kHz and 20/20 full
+# uploads at 1000 kHz. Build it from upstream (no patches):
+#
+#   git clone https://github.com/openocd-org/openocd.git ~/source/openocd-ebaz
+#   cd ~/source/openocd-ebaz && git checkout 129e9d3
+#   ./bootstrap && ./configure --enable-bcm2835gpio --enable-cmsis-dap --disable-werror
+#   make -j4
+#   sudo <repo>/jtag/install-rpi-openocd
+set -eu
+
+runner_home=${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)}
+runner_home=${runner_home:-$HOME}
+source_binary=${1:-$runner_home/source/openocd-ebaz/src/openocd}
+target=/usr/local/libexec/openocd-ebaz-rpi
+
+if [ "$(id -u)" != 0 ]; then
+    echo "Run with sudo." >&2
+    exit 1
+fi
+if [ ! -x "$source_binary" ] || ! "$source_binary" --version >/dev/null 2>&1; then
+    echo "$source_binary is missing or not a runnable OpenOCD build." >&2
+    exit 1
+fi
+install -d -m 0755 /usr/local/libexec
+install -o root -g root -m 0755 "$source_binary" "$target"
+echo "installed $target"

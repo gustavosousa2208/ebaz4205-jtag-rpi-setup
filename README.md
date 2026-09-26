@@ -67,6 +67,41 @@ The installer places root-owned runners in `/usr/local/libexec`. Upload logs go
 to `jtag/logs/`. Success requires DEVCFG checks, released PL resets, ELF verify,
 and UART heartbeat—not LEDs or process exit alone.
 
+## Raspberry Pi 4 setup
+
+Same 40-pin positions as the Banana Pi: header 19 TDI (GPIO10), 21 TDO (GPIO9),
+23 TCK (GPIO11), 24 TMS (GPIO8), 20 GND; UART header 10 (RXD) to EBAZ J7-2,
+header 6 GND. On the Pi, remove `dtparam=spi=on` and any SPI display overlay
+from `config.txt`, add `dtoverlay=disable-bt` (UART becomes the PL011
+`/dev/ttyAMA0`), and drop `console=serial0,115200` from `cmdline.txt`.
+
+The tracked `jtag/bin/openocd` and the distro package corrupt DAP traffic on
+multi-megabyte transfers. Build upstream OpenOCD on the Pi and install it as
+the runner (steps in `jtag/install-rpi-openocd`); `EBAZ_JTAG_ADAPTER=raspberrypi-gpio`
+then selects it and `/dev/ttyAMA0` automatically:
+
+```sh
+sudo ./jtag/install-rpi-openocd
+EBAZ_JTAG_ADAPTER=raspberrypi-gpio EBAZ_JTAG_RATE_LADDER=2000 make upload-full UART=1
+EBAZ_JTAG_ADAPTER=raspberrypi-gpio EBAZ_PCAP_KHZ=2000 make upload-pcap UART=1
+```
+
+Measured on a Pi 4 (2026-09-26): 20/20 full uploads at 1000 kHz with the 2.08 MB
+bitstream (about 23 s); 15/15 at 2000 kHz with a compressed bitstream
+(`upload-full` 9.1 s, `upload-pcap` 10.5 s). 4000 kHz gave a checksum mismatch
+and is not qualified. Pi 4 GPIO drive strength must stay at its default (16 mA);
+2 mA breaks IDCODE reads.
+
+Generate a compressed bitstream (about 39% of the size) from any routed design
+without touching the project:
+
+```sh
+vivado -mode batch -nojournal -nolog -source tools/vivado-compress-bitstream.tcl     -tclargs path/to/design_routed.dcp out.bit
+```
+
+`EBAZ_PCAP_KHZ` and `EBAZ_DAP_MEMACCESS` override the PCAP path's fixed
+1000 kHz and 4-clock defaults.
+
 ## Other adapters
 
 macOS defaults to CMSIS-DAP. Linux GPIO remains the correctness fallback:

@@ -9,6 +9,9 @@ ebaz_init_host() {
         if [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ] &&
            [ -x /usr/local/libexec/openocd-ebaz-mmio ]; then
             EBAZ_OPENOCD=/usr/local/libexec/openocd-ebaz-mmio
+        elif [ "${EBAZ_JTAG_ADAPTER:-}" = raspberrypi-gpio ] &&
+             [ -x /usr/local/libexec/openocd-ebaz-rpi ]; then
+            EBAZ_OPENOCD=/usr/local/libexec/openocd-ebaz-rpi
         elif [ "$EBAZ_HOST_OS" = Darwin ]; then
             EBAZ_OPENOCD=$(command -v openocd || true)
         elif [ -x "$bundle_dir/bin/openocd" ] && "$bundle_dir/bin/openocd" --version >/dev/null 2>&1; then
@@ -66,6 +69,9 @@ ebaz_init_host() {
                [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; } &&
              [ -e /dev/ttyS3 ]; then
             EBAZ_UART_TCP=127.0.0.1:2218
+        elif [ "${EBAZ_JTAG_ADAPTER:-}" = raspberrypi-gpio ] &&
+             [ -e /dev/ttyAMA0 ]; then
+            EBAZ_UART_DEVICE=/dev/ttyAMA0
         elif [ -e /dev/ttyUSB0 ]; then
             EBAZ_UART_DEVICE=/dev/ttyUSB0
         fi
