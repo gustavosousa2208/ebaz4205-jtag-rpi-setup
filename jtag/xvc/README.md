@@ -46,6 +46,16 @@ prompt, run:
 vivado -mode batch -source check-vivado-xvc.tcl -tclargs 127.0.0.1:2542
 ```
 
+The optional second argument selects the hardware server (default
+`localhost:3121`). Pass it when another `hw_server` already owns that port,
+because a server carrying its own stale XVC target makes `open_hw_target` fail
+with "no active target available ... may be locked by another hw_server" before
+this endpoint is reached:
+
+```sh
+vivado -mode batch -source check-vivado-xvc.tcl -tclargs 127.0.0.1:2543 localhost:3122
+```
+
 The Tcl script opens the local `hw_server`, connects to XVC, and requires both
 Zynq TAP IDCODEs (`0x4ba00477` and `0x13722093`) before reporting success. AMD
 documents the `open_hw_target -xvc_url` Tcl command in

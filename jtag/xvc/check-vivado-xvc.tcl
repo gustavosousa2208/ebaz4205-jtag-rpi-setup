@@ -1,9 +1,18 @@
 # Read-only Vivado Hardware Manager check for the EBAZ XVC endpoint.
-# Run with: vivado -mode batch -source check-vivado-xvc.tcl -tclargs 127.0.0.1:2542
+# Run with: vivado -mode batch -source check-vivado-xvc.tcl -tclargs 127.0.0.1:2542 [hw_server_url]
+#
+# The optional second argument selects the hardware server (default localhost:3121). Use it when an
+# unrelated hw_server already owns the default port: that server may carry its own stale XVC target,
+# and then open_hw_target fails with "no active target available ... may be locked by another
+# hw_server" before this endpoint is ever reached.
 
 set xvc_url "127.0.0.1:2542"
+set hw_server_url "localhost:3121"
 if {[info exists ::argc] && $::argc > 0} {
 	set xvc_url [lindex $::argv 0]
+}
+if {[info exists ::argc] && $::argc > 1} {
+	set hw_server_url [lindex $::argv 1]
 }
 
 set manager_open 0
@@ -12,7 +21,7 @@ set target_open 0
 set test_error [catch {
 	open_hw_manager
 	set manager_open 1
-	connect_hw_server -url localhost:3121
+	connect_hw_server -url $hw_server_url
 	set server_connected 1
 	open_hw_target -xvc_url $xvc_url
 	set target_open 1
@@ -33,7 +42,7 @@ set test_error [catch {
 			error "Expected Zynq IDCODE $expected missing from XVC target $xvc_url"
 		}
 	}
-	puts "VIVADO_XVC_PASS url=$xvc_url devices=$devices"
+	puts "VIVADO_XVC_PASS url=$xvc_url server=$hw_server_url devices=$devices"
 } test_message test_options]
 
 if {$target_open} {

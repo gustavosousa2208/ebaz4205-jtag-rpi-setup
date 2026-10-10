@@ -218,3 +218,33 @@ warning, lab archive location, Beads Vivado task, and the OpenOCD source path.
 the guides expose the production commands, cron status/remove/add commands,
 source path, one-owner warning, and related Beads. Manual README link walk
 passed. See Bead `ebaz4205-71t.1` for Vivado compatibility.
+
+## PiProbe network path acceptance (2026-10-10)
+
+The probe server now speaks two protocols from one binary: XVC (Vivado) and
+OpenOCD's `remote_bitbang`, because no stock Windows OpenOCD build ships the
+`xvc` adapter driver. Both stay loopback-only behind the SSH forward, one
+process at a time.
+
+**Status:** real-hardware read-only checks passed.
+
+- Host OpenOCD 0.12.0 over the SSH forward, read-only Zynq-7000 TAP scan:
+  `zynq_pl.bs 0x13722093` and `zynq.cpu 0x4ba00477`, exit 0, no reset or
+  programming issued (`piprobe openocd`, Bead `ebaz4205-3pb.4`).
+- XVC unchanged: 5/5 in-probe IDCODE scans and 3/3 scans from the Windows host
+  through the tunnel returned `0x4ba00477` + `0x13722093`; the checked-in
+  `check-vivado-xvc.tcl` reported
+  `VIVADO_XVC_PASS ... devices=arm_dap_0 xc7z010_1` through Vivado v2025.2.
+- Single owner: with one session holding the pins, a second server was refused
+  (`JTAG pins already in use (pid N protocol remote-bitbang port 4444 in
+  /run/ebaz-jtag-pins.lock)`, exit 3) and a second `piprobe openocd` exited 3;
+  a held host lock likewise refused a second client. After the session the
+  probe had no listener, no server process and a reusable lock.
+- Protocol suites: XVC 32/32 and remote_bitbang 20/20 against a `--fake` server,
+  including the refusals (reset asserts, SWD commands) and one-client-at-a-time.
+
+Note for the Vivado check: if an unrelated `hw_server` already owns
+`localhost:3121` and carries its own stale XVC target, `open_hw_target` fails
+with `no active target available ... may be locked by another hw_server`. Pass
+the optional second argument to point the check at a fresh hardware server:
+`-tclargs 127.0.0.1:2543 localhost:3122`.

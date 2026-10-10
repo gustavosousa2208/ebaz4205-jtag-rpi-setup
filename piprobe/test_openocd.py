@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -89,21 +91,25 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(argv[0], "ssh")
         self.assertIn("BatchMode=yes", argv)
         self.assertIn("StrictHostKeyChecking=yes", argv)
-        script = argv[argv.index("-c") + 1]
+        # ssh joins trailing arguments with spaces without escaping, so the whole remote command must
+        # already be one quoted argument; parse it the way the remote shell will
+        self.assertEqual(argv[-2], "gusta@192.168.0.101")
+        words = shlex.split(argv[-1])
+        self.assertEqual(words[:2], ["sh", "-c"])
+        script = words[2]
         self.assertIn('sudo -n "$1"', script)
         self.assertIn("--protocol remote-bitbang", script)
-        self.assertIn("--port \"$2\"", script)
+        self.assertIn('--port "$2"', script)
         self.assertIn("trap", script)          # the child is killed when this side closes stdin
         self.assertIn("cat >/dev/null", script)
-        # path and port travel as positional parameters, so quoting cannot break them
-        self.assertEqual(argv[-3:], ["piprobe", "/usr/local/libexec/ebaz-xvc-server", "4444"])
-        self.assertEqual(argv[argv.index("sh") - 1], "gusta@192.168.0.101")
+        self.assertEqual(words[3:], ["piprobe", "/usr/local/libexec/ebaz-xvc-server", "4444"])
 
     def test_service_command_keeps_a_path_with_spaces_intact(self) -> None:
         awkward = "/home/gusta/odd path/ebaz-xvc-server"
         argv = openocd.service_argv(NODE, None, awkward, 4444)
-        self.assertEqual(argv[-2], awkward)
-        self.assertIn(awkward, argv)           # passed verbatim, not re-split
+        words = shlex.split(argv[-1])
+        self.assertEqual(words[3:], ["piprobe", awkward, "4444"])   # one argument, not re-split
+        self.assertIn("odd path", argv[-1])
 
     def test_tunnel_commands_forward_only_loopback(self) -> None:
         argv = openocd.tunnel_argv(NODE, "gusta", 4444, 4444)
@@ -138,6 +144,24 @@ class LockTests(unittest.TestCase):
             again = openocd.SessionLock(path)
             self.assertTrue(again.acquire())
             again.release()
+
+    def test_a_refused_session_can_still_name_the_holder(self) -> None:
+        """A Windows byte-range lock blocks reads of the locked range, so the holder text must not live there."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "openocd.lock"
+            lock = openocd.SessionLock(path)
+            self.assertTrue(lock.acquire())
+            try:
+                child = subprocess.run(
+                    [sys.executable, "-c",
+                     "import pathlib, sys; from piprobe import openocd;"
+                     "second = openocd.SessionLock(pathlib.Path(sys.argv[1]));"
+                     "second.acquire(); print('holder=' + second.holder())",
+                     str(path)],
+                    capture_output=True, text=True, timeout=120)
+                self.assertIn(f"pid {os.getpid()}", child.stdout, child.stderr)
+            finally:
+                lock.release()
 
 
 class NodeResolutionTests(unittest.TestCase):

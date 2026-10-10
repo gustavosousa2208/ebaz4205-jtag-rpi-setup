@@ -132,7 +132,7 @@ class SessionLock:
             handle = open(self.path, "a+b")
             handle.seek(0, os.SEEK_END)
             if handle.tell() == 0:
-                handle.write(b"\0")             # byte-range locks need one byte to exist
+                handle.write(b"\0")             # byte 0 is what gets locked, so it must exist
                 handle.flush()
             handle.seek(0)
             if os.name == "nt":
@@ -146,12 +146,23 @@ class SessionLock:
                 with contextlib.suppress(OSError):   # a held range can refuse even closing
                     handle.close()
             return False
-        handle.seek(0)
-        handle.truncate()
+        # The diagnostics live after the locked byte: a Windows byte-range lock blocks reads of the
+        # locked range from other handles, and a refused session must still be able to name the holder.
+        handle.seek(1)
+        handle.truncate(1)
         handle.write(f"pid {os.getpid()} {time.strftime('%Y-%m-%dT%H:%M:%S')}\n".encode())
         handle.flush()
         self._handle = handle
         return True
+
+    def holder(self) -> str:
+        """Describe the session holding the lock, if it can be read."""
+        try:
+            with open(self.path, "rb") as handle:
+                handle.seek(1)
+                return handle.read().decode("utf-8", "replace").strip()
+        except OSError:
+            return ""
 
     def release(self) -> None:
         if self._handle is None:
@@ -234,14 +245,18 @@ def service_argv(node: Node, user: str | None, server_path: str, port: int) -> l
     """SSH command that runs the probe-side service for one session.
 
     The remote shell kills the sudo child when its stdin closes, which happens when this side stops
-    the ssh process: sudo relays the signal and the server prints 'stopped, pins restored'. The path
-    and port travel as positional parameters so no shell quoting can break them.
+    the ssh process: sudo relays the signal and the server prints 'stopped, pins restored'. The whole
+    remote command travels as one quoted argument, because ssh joins trailing arguments with spaces
+    without escaping them. Path and port go in as positional parameters so shell quoting cannot
+    break them.
     """
     script = ('sudo -n "$1" --protocol remote-bitbang --port "$2" & child=$!; '
               "trap 'kill \"$child\" 2>/dev/null' EXIT HUP INT TERM; "
               "cat >/dev/null")
+    remote = " ".join([shlex.quote("sh"), "-c", shlex.quote(script),
+                       shlex.quote("piprobe"), shlex.quote(server_path), shlex.quote(str(port))])
     destination = f"{user}@{node.host}" if user else node.host
-    return [*ssh_base(node.port), destination, "sh", "-c", script, "piprobe", server_path, str(port)]
+    return [*ssh_base(node.port), destination, remote]
 
 
 def tunnel_argv(node: Node, user: str | None, local_port: int, remote_port: int) -> list[str]:
@@ -513,9 +528,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     lock = SessionLock(lock_path)
     if not lock.acquire():
-        holder = lock_path.read_text(encoding="utf-8", errors="replace").strip()
-        print(f"piprobe openocd: another session holds {lock_path} ({holder}); refusing to drive the probe",
-              file=sys.stderr)
+        print(f"piprobe openocd: another session holds {lock_path} ({lock.holder() or 'holder unknown'}); "
+              "refusing to drive the probe", file=sys.stderr)
         return EXIT_TRANSPORT
 
     service = RemoteService(result.node, args.user, args.server_path, args.rbb_port, args.verbose)
