@@ -82,7 +82,32 @@ pipx install --python 3.11 .
 piprobe discover
 ```
 
-To select another installed Python that satisfies the minimum, pass that interpreter to `--python`.
+To select another installed Python that satisfies the minimum, pass that interpreter to `--python`. Without a clone, install straight from the pushed source:
+
+```sh
+pipx install "git+https://github.com/gustavosousa2208/ebaz4205-jtag-rpi-setup@main"
+```
+
+### Linux hosts without pipx
+
+Some Debian-based images, including the probes themselves, have no `pipx`; installing it needs an
+administrator (`sudo apt install -y pipx python3-venv`). When that is not available, a user-local
+install is the supported fallback:
+
+```sh
+python3 -m pip install --user .
+~/.local/bin/piprobe --version
+```
+
+That puts the package in the user's own site-packages rather than an isolated environment, so it can
+collide with other user-installed packages and must be removed before switching to pipx:
+
+```sh
+python3 -m pip uninstall -y piprobe   # then: pipx install <source>
+```
+
+Copying package files into site-packages is **not** a supported install path: it bypasses the metadata
+and drifts from the released version. Use one of the installs above.
 
 For development, install the discovery dependency in a project virtual environment:
 
