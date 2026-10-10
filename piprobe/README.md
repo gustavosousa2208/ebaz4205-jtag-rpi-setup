@@ -21,8 +21,34 @@ the user logs in, an administrator must run `loginctl enable-linger <user>`;
 without lingering, the service starts with that user's systemd session.
 
 The supported network-control path is the Pi's authenticated SSH transport to
-a loopback-only XVC server. Start the server separately using the instructions
-in `jtag/xvc/README.md`; discovery does not start or tunnel it.
+a loopback-only JTAG service. `piprobe openocd` performs it end to end; starting
+the service by hand (see `jtag/xvc/README.md`) is only needed for the Vivado
+workflow. Discovery itself never starts or tunnels anything.
+
+## Running host OpenOCD
+
+`piprobe openocd` turns a discovered node into a working JTAG adapter for host
+OpenOCD. It resolves the node, starts the probe's loopback-only service for the
+session, opens the authenticated SSH forward, runs OpenOCD, and tears both down
+again: no manual SSH, no remote shell, and nothing is replayed automatically.
+
+```sh
+piprobe openocd --node PiProbe-5ef16103
+```
+
+Without further arguments it performs the read-only Zynq-7000 TAP scan of the
+EBAZ4205 and verifies both IDCODEs. `-f board.cfg` instead runs your own OpenOCD
+scripts after the transport configuration, so target scripts stay on the host
+machine. `--json` prints a structured result, `--dry-run` shows the plan without
+touching the probe, and `--opencd` points at a specific OpenOCD binary when none
+is on `PATH`.
+
+The transport is OpenOCD's `remote_bitbang` over the SSH forward: no stock
+Windows OpenOCD build ships the `xvc` adapter driver, while every build has
+`remote_bitbang`. OpenSSH must be able to verify the probe's host key without
+prompting, because the command runs unattended. One session per host is enforced
+with a lock file next to the peer file, and the probe refuses a second service on
+its own.
 
 Install the globally callable `piprobe` command through `pipx`; it exposes a launcher on `PATH` and manages PiProbe's isolated runtime environment. Users do not need to activate or maintain a project virtual environment. The package requires Python 3.11+ without pinning one exact minor version, and never replaces the macOS/OS-provided Python.
 

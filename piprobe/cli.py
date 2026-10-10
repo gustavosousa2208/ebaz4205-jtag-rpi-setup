@@ -6,7 +6,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from piprobe import __version__, announce, discover
+from piprobe import __version__, announce, discover, openocd
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -23,6 +23,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return discover.main(arguments[1:])
     if arguments[0] == "announce":
         return announce.main(arguments[1:])
+    if arguments[0] == "openocd":
+        return openocd.main(arguments[1:])
     if arguments[0] == "--version":
         print(f"piprobe {__version__}")
         return 0
