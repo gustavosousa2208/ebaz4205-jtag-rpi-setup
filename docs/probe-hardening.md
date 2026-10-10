@@ -254,8 +254,120 @@ process at a time.
   /run/ebaz-jtag-pins.lock)`, exit 3) and a second `piprobe openocd` exited 3;
   a held host lock likewise refused a second client. After the session the
   probe had no listener, no server process and a reusable lock.
-- Protocol suites: XVC 32/32 and remote_bitbang 20/20 against a `--fake` server,
-  including the refusals (reset asserts, SWD commands) and one-client-at-a-time.
+- Protocol suites: XVC 32/32, remote_bitbang 20/20, SWD 29/29 and — see the
+  next section — lifecycle 16/16, all against `--fake` servers started by the
+  tests themselves. They cover response framing, one-client-at-a-time, the
+  fail-closed refusals (reset asserts on a port with no reset line, TRST
+  everywhere, TDO reads on an SWD port, SWD commands on a JTAG port) and, on an
+  SWD port, the SWDIO turnaround and the `--nrst` gate. All four pass on the
+  Banana Pi (armv7) and on x86_64.
+
+## Service lifecycle hardening (2026-10-10)
+
+Found while driving the SWD path from the host: a server started over a channel
+can outlive that channel, and a surviving server holds the pins, so the next
+session is refused by the lock while `--stop-holder`-less builds offer no way
+out without another password prompt. Two additions in the server:
+
+- If stdin is a pipe or a socket, the server stops when it closes. That is the
+  shape a service has when a tool starts it over ssh, so a dropped channel now
+  ends the service by itself. Terminal and `/dev/null` stdin are ignored, and a
+  script that starts the server should redirect stdin from `/dev/null` rather
+  than inheriting a pipe.
+- `--stop-holder` reads the pin lock and signals the server named in it, after
+  checking that the command line really is a server binary. Exit 0 means the
+  pins are free. It is the documented recovery for a server left by an older
+  build or a `kill -9`.
+
+Four protocol suites now cover the server in `--fake` mode, all passing on
+x86_64 and on the Banana Pi: XVC 32/32, remote_bitbang 20/20, SWD 29/29 and
+lifecycle 16/16. The lifecycle suite drives the stdin rule, the second-server
+refusal (exit 3) and the reap.
+
+### Flashing (validated 2026-10-10)
+
+Writing works through the same local runner, and it was validated destructively on
+the bench H743VIT6, so the recovery path is not theoretical: both flash banks
+erased (`erased sectors 0 through 7` per bank, ~7 s each), blankness confirmed by
+reading `0x08000000`, `0x08100000` and `0x081ff000` back as `ffffffff`, the 2 MB
+snapshot programmed with `program <file> 0x08000000 verify reset`, and then an
+independent re-dump whose md5 equals the snapshot's (`799c18e0…`). The board was
+confirmed executing afterwards: `pc` moved from `0x08021686` to `0x0803ae80`
+across a 300 ms resume.
+
+Two practical notes: the Pi's OpenOCD needs `-s /usr/share/openocd/scripts`
+because its scripts directory is not compiled in, and `target/stm32h7x_dual_bank.cfg`
+is the config for a 2 MB H743 — the single-bank file would mis-map the upper
+megabyte. Program plus verify of 2 MB takes ~150 s at an effective 13.7 KiB/s, far below the requested 1000 kHz, so
+the rate deserves a look before bulk work. The runner's own log narrows that down: it reports
+`EBAZ MMIO rate selected: requested_khz=4000` while the transfer runs at 13.7 KiB/s, so the limit is
+per-transaction overhead in the SWD access path, not the shift clock. Sector erase leaves the option
+bytes alone, so a board's boot configuration survives this, and the remote_bitbang network path remains
+the wrong transport for bulk payloads.
+
+### Zephyr and RTT (validated 2026-10-10)
+
+The bench H743 now has a console that needs no UART and no extra pins: an RTT-only Zephyr app, built for
+the `mini_stm32h743` board target (that is the WeAct H743VIT6), flashed through the same SWD header, and
+read back over the same link.
+
+- App `h743-rtt-test` (three files: `CMakeLists.txt`, `prj.conf` with `CONFIG_USE_SEGGER_RTT` and a 1 KB
+  up buffer, and `src/main.c`, which writes a counter to channel 0 every 500 ms). Build it inside the
+  Zephyr workspace: `west build -b mini_stm32h743 -d ~/h743-rtt-build <app-dir>`.
+- Control block address comes from the image, so `rtt setup` needs no search:
+  `arm-zephyr-eabi-nm zephyr.elf | grep _SEGGER_RTT` printed `24000410` for this build (AXI SRAM).
+- Repo tools: `jtag/h743-flash.sh` (program with verify and reset, then a two-sample program counter
+  check that distinguishes "idle" from "hung") and `jtag/h743-rtt-read.sh <addr> [seconds]`. The reader
+  starts OpenOCD on the probe with RTT on channel 0 and shuts it down through its own telnet console,
+  because a root-owned OpenOCD cannot be signalled from the login account.
+- Evidence: `tick 145 uptime 72524 ms` through `tick 163 uptime 81526 ms` over an 8 s read — 18 ticks in
+  18 slots at 500 ms, nothing dropped — then `openocd stopped` with the pins released.
+- The flash run's closing reset really does restart the app, which the same numbers show: a read taken a
+  minute after a `program … reset` reports `tick 144 uptime 72024 ms`, a 72 s old boot, not a
+  continuation of the stream before it.
+- Not exercised: RTT over the network path (probe `remote_bitbang` transport), the RTT down channel, and
+  ETM/ITM trace, which stays open in Bead `ebaz4205-s85`.
+
+## SWD transport (2026-10-10)
+
+An MCU target is reached over the same remote_bitbang path, with the port asked
+for SWD explicitly: `--swd 8,9` claims SWCLK/SWDIO on the lines the repository
+already wires for it, `--nrst 6` adds the reset line (the series resistor in
+[`jtag/adapters/bananapi-m2-zero-swd.cfg`](../jtag/adapters/bananapi-m2-zero-swd.cfg)
+applies to that wire, not to this flag), and TDI/TDO are never claimed. The
+data line is re-requested as input or output on every turnaround, which is what
+the `linuxgpiod` driver does inside OpenOCD for the local path; the remote path
+does it with gpiochip handle requests.
+
+**Status:** verified on hardware, read-only, from both ends of the link.
+
+- The probe-side service was started with `--swd 8,9` alone (no `--nrst`, so
+  every reset request stays refused).
+- Pi-side client, over loopback: `SWD DPIDR 0x6ba02477`, `Cortex-M7 r1p1
+  processor detected`, `target has 8 breakpoints, 4 watchpoints`, `Examination
+  succeed`, then `pc (/32): 0x08021694`, `sp (/32): 0x24009158`, `resume`.
+- Windows host, xPack OpenOCD 0.12.0-7 through the SSH forward, with
+  `interface/pi-remote-bitbang.cfg` and `target/stm32-swd.cfg`: identical
+  detection and `pc (/32): 0x08021698` — the program counter advanced between
+  the two runs, so the core was running its own firmware and the halt/resume
+  pair did not rewind it.
+- Readback commands only print when they are passed as their own `-c`
+  argument; the same commands inside a `-f` script run without printing their
+  result. Both runs above used separate `-c` flags for that reason.
+Root cause of the host-side failure that looked like a cable problem, found with
+`--trace` (which logs the client's command bytes to stderr): the server held
+SWDIO as an input until OpenOCD sent `'O'`, but OpenOCD's driver sends its SWD
+line reset as plain pin writes (`'0'`-`'7'`). When that reset arrived first it
+was clocked onto a floating line, the DP never woke, and the host reported
+`Error connecting DP: cannot read IDR` against a target that the local
+`linuxgpiod` driver reached without trouble. The server now infers the direction
+from the traffic — a pin write or a `'d'` drives SWDIO, a `'c'` releases it —
+while the explicit `'O'`/`'o'` are still honoured. `--trace` stays: a bit-level
+transport with no way to see the bytes is what made this expensive to find.
+
+- Still open on this transport: programming, RTT streaming and ETM/ITM trace,
+  a reset-assert check with `--nrst` and the series resistor in place, and an
+  NXP part. Bead `ebaz4205-s85`.
 
 Note for the Vivado check: if an unrelated `hw_server` already owns
 `localhost:3121` and carries its own stale XVC target, `open_hw_target` fails
