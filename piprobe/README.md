@@ -56,9 +56,18 @@ is on `PATH`.
 The transport is OpenOCD's `remote_bitbang` over the SSH forward: no stock
 Windows OpenOCD build ships the `xvc` adapter driver, while every build has
 `remote_bitbang`. OpenSSH must be able to verify the probe's host key without
-prompting, because the command runs unattended. One session per host is enforced
-with a lock file next to the peer file, and the probe refuses a second service on
-its own.
+prompting, because the command runs unattended. The client dials the address the
+advertisement carries, so `known_hosts` needs an entry for that address; a probe
+you previously reached by name (`gusta-bpi`) is not automatically trusted at
+`192.168.0.101`, and an unknown key fails closed rather than asking:
+
+```sh
+# pin the address the advertisement carries, after checking the fingerprint
+ssh-keygen -F 192.168.0.101 || ssh-keyscan -t ed25519 192.168.0.101 >> ~/.ssh/known_hosts
+```
+
+One session per host is enforced with a lock file next to the peer file, and the
+probe refuses a second service on its own.
 
 Install the globally callable `piprobe` command through `pipx`; it exposes a launcher on `PATH` and manages PiProbe's isolated runtime environment. Users do not need to activate or maintain a project virtual environment. The package requires Python 3.11+ without pinning one exact minor version, and never replaces the macOS/OS-provided Python.
 
