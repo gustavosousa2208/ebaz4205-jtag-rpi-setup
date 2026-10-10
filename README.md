@@ -75,6 +75,15 @@ MMIO line, and touches only the Port A pins. Keep the installed runner (with sud
 the acceleration is what makes a 2 MB upload finish in about 19 s; the distro `/usr/bin/openocd` on
 the probe has no `linuxgpiod`, so it cannot serve either port.
 
+One operational note: a session leaves SWCLK and SWDIO configured as outputs, because their direction
+is written straight into the H2+ pin-mux register and releasing the libgpiod handle does not restore
+it. Unwired that is harmless, but before connecting a target — or after a killed session — put them
+back with:
+
+```sh
+gpioget -c gpiochip0 8 9 >/dev/null     # requests both as inputs; verified to report input afterwards
+```
+
 Not yet available over the network: the PiProbe server speaks XVC and remote_bitbang for JTAG only
 and refuses reset asserts, so SWD needs the driver's four SWD commands implemented in the server
 (`'d'` SWD write, `'O'`/`'o'` SWDIO direction, `'c'` SWDIO read) plus the same runtime direction
