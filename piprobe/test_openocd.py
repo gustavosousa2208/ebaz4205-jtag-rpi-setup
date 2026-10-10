@@ -454,12 +454,16 @@ class MainTests(unittest.TestCase):
                          verbose: object, mode_args: object = ()) -> None:
                 seen["mode_args"] = list(mode_args)  # type: ignore[arg-type]
                 seen["server_path"] = [str(server_path)]
+                self.lines: list[str] = ["remote-bitbang-server: listening on 127.0.0.1:4444"]
 
             def start(self) -> None:
                 pass
 
             def stop(self) -> None:
                 pass
+
+            def _tail(self, limit: int = 6) -> str:
+                return " | ".join(self.lines[-limit:])
 
         def fake_run(binary: str, commands: list[str], scripts: list[str], verbose: bool,
                      post_commands: tuple[str, ...] = ()) -> tuple[int, str]:

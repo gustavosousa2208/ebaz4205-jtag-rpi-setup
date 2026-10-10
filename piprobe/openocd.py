@@ -652,7 +652,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if not 1 <= args.rbb_port <= 65535:
             raise UsageError("--rbb-port must be 1..65535")
-        local_port = args.local_port or args.rbb_port
+        # `or` would treat an explicit --local-port 0 as "unset" and silently use the remote port.
+        local_port = args.local_port if args.local_port is not None else args.rbb_port
         if not 1 <= local_port <= 65535:
             raise UsageError("--local-port must be 1..65535")
         if args.swd and not args.scripts:
