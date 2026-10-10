@@ -84,6 +84,69 @@ def candidate_from_service(info: object, service_name: str, source: str = "mdns"
     }
 
 
+def host_names(row: dict[str, object]) -> set[str]:
+    """Host names a record can be recognized by, normalized without resolving anything."""
+    names: set[str] = set()
+    for value in (row.get("host"), *(row.get("aliases") or [])):
+        text = str(value or "").strip().rstrip(".").casefold()
+        if not text:
+            continue
+        names.add(text)
+        if text.endswith(".local"):
+            names.add(text[: -len(".local")])
+    return names
+
+
+def node_addresses(row: dict[str, object]) -> set[str]:
+    return {str(address).strip().casefold() for address in (row.get("addresses") or []) if str(address).strip()}
+
+
+def same_node(first: dict[str, object], second: dict[str, object]) -> bool:
+    """True when two records provably describe one machine, without contacting either of them.
+
+    Names are compared with names and addresses with addresses, and also across the two, because a
+    pinned peer may name the probe by address while the mDNS record names it by host.
+    """
+    first_names, second_names = host_names(first), host_names(second)
+    first_addresses, second_addresses = node_addresses(first), node_addresses(second)
+    return bool(first_addresses & second_addresses
+                or first_names & second_names
+                or first_addresses & second_names
+                or second_addresses & first_names)
+
+
+def merge_candidates(candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Collapse one machine discovered through more than one path into a single entry.
+
+    A pinned peer entry and the mDNS record for the same probe are one node: announcing both would
+    report one machine as two probes. Every path stays visible in 'sources' so an operator can still
+    see why the node appeared, and the peer's name becomes an alias. Two records from the same path
+    are never merged, because a duplicate there is a configuration problem worth seeing.
+    """
+    merged: list[dict[str, object]] = []
+    for row in candidates:
+        for index, existing in enumerate(merged):
+            if existing.get("source") == row.get("source") or not same_node(existing, row):
+                continue
+            # the richer record leads; a peer entry contributes its name and pinned identity
+            preferred, other = (existing, row) if existing.get("source") != "peer-config" else (row, existing)
+            preferred = dict(preferred)
+            paths = [str(preferred.get("source")), *(str(path) for path in (preferred.get("sources") or [])),
+                     str(other.get("source")), *(str(path) for path in (other.get("sources") or []))]
+            preferred["sources"] = list(dict.fromkeys(paths))
+            names = [*(preferred.get("aliases") or []), str(other.get("name", "")), *(other.get("aliases") or [])]
+            aliases = [str(name) for name in dict.fromkeys(names) if name]
+            if aliases:
+                preferred["aliases"] = aliases
+            if other.get("expected_identity"):
+                preferred["expected_identity"] = other["expected_identity"]
+            merged[index] = preferred
+            break
+        else:
+            merged.append(dict(row))
+    return merged
+
+
 class ProbeListener:
     """Collect only service records; never connect to an advertised endpoint."""
 
@@ -271,6 +334,10 @@ def endpoint_for(row: dict[str, object]) -> str:
     return f"{host}:{port}" if port else host or "-"
 
 
+TABLE_WIDTHS = (16, 10, 20, 5, 6, 10)
+SOURCE_LABELS = {"mdns": "mDNS", "peer-config": "peer"}
+
+
 def print_table(candidates: list[dict[str, object]], *, color: bool | None = None) -> None:
     use_color = color_enabled() if color is None else color
     if not candidates:
@@ -281,14 +348,15 @@ def print_table(candidates: list[dict[str, object]], *, color: bool | None = Non
     noun = "probe" if count == 1 else "probes"
     print(f"{paint('PiProbe', '1;36', use_color)}  {paint(f'{count} {noun} found | all unverified', '2', use_color)}")
 
-    widths = (18, 10, 24, 5, 8, 5)
+    widths = TABLE_WIDTHS
     headers = ("PROBE", "STATE", "ADDRESS", "LINK", "CAPS", "FROM")
     print("  ".join(paint(fit_cell(label, width), "1", use_color) for label, width in zip(headers, widths)))
 
     state_colors = {"ready": "32", "trusted": "32", "busy": "33", "untrusted": "31", "unverified": "33"}
     for row in sorted(candidates, key=lambda item: str(item.get("name", "")).casefold()):
         state = safe_text(row.get("state", "unknown"), 24).upper()
-        source = "mDNS" if row.get("source") == "mdns" else "peer" if row.get("source") == "peer-config" else safe_text(row.get("source", "?"), 24)
+        paths = row.get("sources") or [row.get("source", "?")]
+        source = ",".join(SOURCE_LABELS.get(str(path), safe_text(path, 24)) for path in paths)
         caps = ",".join(safe_text(cap, 16).upper() for cap in row.get("capabilities", [])) or "-"
         values = (
             safe_text(row.get("name", "-"), 256),
@@ -331,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(f"piprobe-discover: warning: {exc}; showing configured peers only", file=sys.stderr)
 
+    candidates = merge_candidates(candidates)
     if args.json:
         print(json.dumps(candidates, indent=2, ensure_ascii=False))
     else:

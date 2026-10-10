@@ -32,6 +32,58 @@ def sample_info() -> SimpleNamespace:
     )
 
 
+class MergeTests(unittest.TestCase):
+    """One machine must not be reported as two probes just because two paths found it."""
+
+    def peer(self, name: str = "gusta-bpi", host: str = "gusta-bpi") -> dict[str, object]:
+        return {"name": name, "host": host, "port": 22, "transport": "ssh", "capabilities": [],
+                "addresses": [], "source": "peer-config", "node_id": "",
+                "expected_identity": "ssh-ed25519 SHA256:BICkrMc+MgmpbIzycwz3AAFa7eRaK5syYc/ThRFcaCU"}
+
+    def mdns(self, name: str = "PiProbe-5ef16103", host: str = "gusta-bpi.local.",
+             address: str = "192.168.0.101") -> dict[str, object]:
+        return {"name": name, "host": host, "port": 22, "transport": "ssh", "capabilities": ["jtag"],
+                "addresses": [address], "source": "mdns", "node_id": "5ef16103-0cba-4df1-8af4-ddf366da7387"}
+
+    def test_peer_entry_and_mdns_record_for_one_host_become_one_probe(self) -> None:
+        merged = discover.merge_candidates([self.peer(), self.mdns()])
+        self.assertEqual(len(merged), 1)
+        node = merged[0]
+        self.assertEqual(node["name"], "PiProbe-5ef16103")            # the richer record leads
+        self.assertEqual(node["sources"], ["mdns", "peer-config"])    # both paths stay visible
+        self.assertIn("gusta-bpi", node["aliases"])
+        self.assertEqual(node["expected_identity"], self.peer()["expected_identity"])
+        self.assertEqual(node["addresses"], ["192.168.0.101"])
+
+    def test_two_machines_found_twice_report_two_probes(self) -> None:
+        rows = [self.peer(), self.mdns(), self.mdns("PiProbe-dc4817ec", "gusta-rpi.local.", "192.168.0.69")]
+        merged = discover.merge_candidates(rows)
+        self.assertEqual([node["name"] for node in merged], ["PiProbe-5ef16103", "PiProbe-dc4817ec"])
+        output = io.StringIO()
+        with patch.object(sys, "stdout", output):
+            discover.print_table(merged, color=False)
+        self.assertIn("2 probes found", output.getvalue())
+
+    def test_a_peer_that_names_an_address_merges_with_its_mdns_record(self) -> None:
+        merged = discover.merge_candidates([self.peer(host="192.168.0.101"), self.mdns()])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["sources"], ["mdns", "peer-config"])
+
+    def test_two_records_from_the_same_path_stay_visible(self) -> None:
+        # a duplicate inside one path is a configuration problem, not a node found twice
+        merged = discover.merge_candidates([self.peer(), self.peer(name="gusta-bpi-again")])
+        self.assertEqual([node["name"] for node in merged], ["gusta-bpi", "gusta-bpi-again"])
+
+    def test_records_for_different_machines_never_merge(self) -> None:
+        rows = [self.mdns(), self.mdns("PiProbe-dc4817ec", "gusta-rpi.local.", "192.168.0.69")]
+        self.assertEqual(len(discover.merge_candidates(rows)), 2)
+
+    def test_a_peer_alone_is_unchanged(self) -> None:
+        merged = discover.merge_candidates([self.peer()])
+        self.assertEqual(len(merged), 1)
+        self.assertNotIn("sources", merged[0])
+
+
 class DiscoveryRecordTests(unittest.TestCase):
     def test_human_table_is_aligned_and_uses_optional_color(self) -> None:
         rows = [
@@ -56,9 +108,9 @@ class DiscoveryRecordTests(unittest.TestCase):
         plain = re.sub(r"\x1b\[[0-9;]*m", "", rendered)
         lines = plain.splitlines()
         self.assertIn("2 probes found", lines[0])
-        self.assertEqual(len(lines[1]), 80)
-        self.assertEqual(len(lines[2]), 80)
-        self.assertEqual(len(lines[3]), 80)
+        expected_width = sum(discover.TABLE_WIDTHS) + 2 * (len(discover.TABLE_WIDTHS) - 1)
+        for line in lines[1:4]:
+            self.assertEqual(len(line), expected_width, line)
         self.assertTrue(any("192.168.1.20:2542" in line for line in lines))
         self.assertTrue(any("gusta-bpi:22" in line for line in lines))
 

@@ -10,7 +10,14 @@ Use DNS-Based Service Discovery (DNS-SD) as the common record model, with multip
 2. **Unicast DNS-SD is an optional managed-network path.** A network can publish the same service records through ordinary DNS when multicast is filtered. This requires a configured DNS domain and service records or an approved registration mechanism.
 3. **Trusted peer entries are the last-resort path** for networks with neither usable multicast nor managed DNS-SD. Store explicit hostnames or addresses and a pinned node identity. Do not probe whole subnets or guess addresses.
 
-These paths can be enabled together. Each result records how it was found so operators can diagnose why a node appeared. Do not assume `.local` name resolution works when mDNS is blocked.
+These paths can be enabled together. Each result records how it was found so operators can diagnose
+why a node appeared. When two paths provably describe one machine — a pinned peer entry and the mDNS
+record share a host name, or a peer named by address matches the advertised address — `piprobe
+discover` reports a single row whose `FROM` column lists every path (for example `mDNS,peer`), so one
+probe is never presented as two. Two records from the same path are not merged: a duplicate there is
+a configuration problem worth seeing. Merging never contacts a node; it only compares the host names
+and addresses already in the records. Do not assume `.local` name resolution works when mDNS is
+blocked.
 
 The host client implements mDNS and the explicit peer file. `piprobe announce`
 publishes the Pi-side mDNS record and advertises SSH as its SRV endpoint. A

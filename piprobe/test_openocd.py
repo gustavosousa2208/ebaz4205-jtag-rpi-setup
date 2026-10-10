@@ -200,6 +200,31 @@ class NodeResolutionTests(unittest.TestCase):
             rows = [row] if request != "gusta-bpi" else [self.row("gusta-bpi", "192.168.0.101")]
             self.assertEqual(self.resolve(rows, request).host, "192.168.0.101")
 
+    def test_one_machine_found_twice_answers_to_either_name(self) -> None:
+        peer = {"name": "gusta-bpi", "host": "gusta-bpi", "port": 22, "transport": "ssh", "capabilities": [],
+                "addresses": [], "source": "peer-config", "node_id": ""}
+        mdns = {"name": "PiProbe-5ef16103", "host": "gusta-bpi.local.", "port": 22, "transport": "ssh",
+                "capabilities": ["jtag"], "addresses": ["192.168.0.101"], "source": "mdns",
+                "node_id": "5ef16103-aaaa"}
+        for request in ("gusta-bpi", "PiProbe-5ef16103", "192.168.0.101", "5ef16103-aaaa"):
+            node = self.resolve([mdns], request, [peer])
+            self.assertEqual(node.name, "PiProbe-5ef16103", request)
+            self.assertEqual(node.host, "192.168.0.101", request)
+
+    def test_ambiguity_counts_nodes_not_discovery_paths(self) -> None:
+        peer = {"name": "gusta-bpi", "host": "gusta-bpi", "port": 22, "transport": "ssh", "capabilities": [],
+                "addresses": [], "source": "peer-config", "node_id": ""}
+        rows = [{"name": "PiProbe-5ef16103", "host": "gusta-bpi.local.", "port": 22, "transport": "ssh",
+                 "capabilities": ["jtag"], "addresses": ["192.168.0.101"], "source": "mdns", "node_id": "5ef16103"},
+                {"name": "PiProbe-dc4817ec", "host": "gusta-rpi.local.", "port": 22, "transport": "ssh",
+                 "capabilities": ["jtag"], "addresses": ["192.168.0.69"], "source": "mdns", "node_id": "dc4817ec"}]
+        with self.assertRaises(openocd.UsageError) as caught:
+            self.resolve(rows, None, [peer])
+        message = str(caught.exception)
+        self.assertIn("PiProbe-5ef16103", message)
+        self.assertIn("PiProbe-dc4817ec", message)
+        self.assertNotIn("gusta-bpi", message)      # merged into the record it duplicates
+
     def test_unknown_request_lists_what_was_found(self) -> None:
         with self.assertRaises(openocd.UsageError) as caught:
             self.resolve([self.row("PiProbe-5ef16103", "192.168.0.101")], "nope")
