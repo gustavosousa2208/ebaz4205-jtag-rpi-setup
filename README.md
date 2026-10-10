@@ -143,7 +143,9 @@ The operational failure/recovery test matrix is
 PiProbe network discovery design and fallback paths are documented in
 [docs/piprobe-discovery.md](docs/piprobe-discovery.md) and tracked under Bead
 `ebaz4205-3pb`. The host-side mDNS discovery command is described in
-[piprobe/README.md](piprobe/README.md).
+[piprobe/README.md](piprobe/README.md), which also covers `piprobe openocd`:
+one command that resolves a probe, runs the loopback-only service through an
+authenticated SSH forward, and runs host OpenOCD against the EBAZ4205.
 
 ## Project layout
 

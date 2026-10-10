@@ -55,39 +55,43 @@ Reachability checks use short deadlines and do not block discovery of other node
 
 Discovery is not authentication or authorization. LAN visibility exposes only
 the SSH endpoint and minimal metadata; it never exposes JTAG control. The
-supported JTAG path keeps raw XVC bound to `127.0.0.1` and forwards it through
-OpenSSH. The host must verify the saved SSH host key and authenticate with an
-authorized user key; unknown or changed host keys fail closed. Access is
-authorized by the Pi's SSH account and the existing narrow sudo rule for the
-XVC executable. Do not use passwordless broad sudo or LAN-bound raw XVC. If SSH
-authentication, host-key verification, the forwarding channel, or the local
-XVC server fails, control is unavailable. PiProbe discovery alone never
-connects to an advertised service or grants trust.
+supported JTAG path keeps the probe's service bound to `127.0.0.1` and forwards
+it through OpenSSH, for both of the protocols that service speaks: XVC for
+Vivado and `remote_bitbang` for OpenOCD. The host must verify the saved SSH host
+key and authenticate with an authorized user key; unknown or changed host keys
+fail closed. Access is authorized by the Pi's SSH account and the existing
+narrow sudo rule for the server executable. Do not use passwordless broad sudo
+and never bind the service to a LAN address. If SSH authentication, host-key
+verification, the forwarding channel, or the local server fails, control is
+unavailable. PiProbe discovery alone never connects to an advertised service or
+grants trust.
 
 ### Threat model and enforcement
 
 | Threat | Enforced by |
 |---|---|
-| A LAN client connects to the XVC port directly | `xvc-server.c` binds `INADDR_LOOPBACK` unconditionally; the binary has no bind-address option, and `install-xvc.sh` refuses to install one that accepts it |
-| An operator or agent starts the server on a LAN address | The same rejection; the supported start command passes only `--port` and `--rate-khz` |
+| A LAN client connects to the JTAG port directly | `xvc-server.c` binds `INADDR_LOOPBACK` unconditionally in both protocol modes; the binary has no bind-address option, and `install-xvc.sh` refuses to install one that accepts it |
+| An operator or agent starts the server on a LAN address | The same rejection; the supported start commands pass only `--protocol`, `--port` and `--rate-khz` |
 | A look-alike host uses the tunnel | OpenSSH host-key verification plus public-key authentication; an unknown or changed key fails closed, and the host opens the tunnel rather than the probe accepting clients |
 | A discovery record is treated as authorization | TXT metadata carries only protocol major version, opaque node ID, coarse capability tokens, and `transport=ssh`; candidates stay untrusted until the control service confirms identity |
 | A probe service escalates privilege | The server runs as root only for one `/dev/mem` PIO page, never interprets client data, and toggles four pins; the sudoers rule pins that one binary path with `NOPASSWD` and grants nothing else |
-| Two sessions drive the JTAG pins at once | The server serves one client at a time; a second concurrent session is rejected before it reaches the pins |
+| Two sessions drive the JTAG pins at once | The server serves one client at a time, and holds an exclusive lock on the pins, so a second server refuses to start (exit 3) and names the holder; the host client holds its own session lock as well |
+| An XVC session and an OpenOCD session overlap | The same pin lock: the two protocols are separate processes, and only one can hold the pins. Neither tool is ever pointed at a probe another tool is driving |
+| A tool asks the probe to reset or debug the target | `remote_bitbang` reset asserts (`s`/`t`/`u`) and SWD-only commands are refused by closing the connection, because no reset line is wired and the pins are JTAG-only; the read-only scan never issues them |
 
-Residual risk, accepted rather than mitigated here: XVC has no authentication
-of its own, so any principal with a shell on the probe can drive JTAG while a
-server is running; the SSH account is the trust anchor, and nothing below
-authorizes individual operations; mDNS records are unauthenticated and
-spoofable, which is why a repeated node ID with a different key or endpoint is
-an identity conflict rather than a replacement; and the probe's own sudo
-logging is the only audit trail for starting the server.
+Residual risk, accepted rather than mitigated here: neither XVC nor
+`remote_bitbang` authenticates its client, so any principal with a shell on the
+probe can drive JTAG while a server is running; the SSH account is the trust
+anchor, and nothing below authorizes individual operations; mDNS records are
+unauthenticated and spoofable, which is why a repeated node ID with a different
+key or endpoint is an identity conflict rather than a replacement; and the
+probe's own sudo logging is the only audit trail for starting the server.
 
 Verify an installation with:
 
 ```sh
 timeout 2 /usr/local/libexec/ebaz-xvc-server --fake --port 2549 --bind 127.0.0.1
-echo "exit $?  # 2 = rejected (safe); 124 = the server ran and accepted --bind"
+echo "exit $?  # 2 = rejected (safe); 3 = another server holds the pins; 124 = the server ran and accepted --bind"
 ```
 
 ## Standards
