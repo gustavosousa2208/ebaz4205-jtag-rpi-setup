@@ -111,6 +111,20 @@ reported 34.128 s total. Afterward the UART bridge remained the only UART
 owner, with both ports 2217 and 2218 listening; no OpenOCD/XVC process or port
 remained.
 
+Correction 2026-10-10: the `EBAZ_USE_SUDO=0` in that command only worked because
+the shell was already root. From a normal user shell the root-owned MMIO runner
+cannot open `/dev/mem` (`EBAZ MMIO: open /dev/mem: Permission denied`), so the
+supported form is now:
+
+```sh
+EBAZ_JTAG_ADAPTER=bananapi-m2-zero-mmio make upload-pcap UART=1
+```
+
+with the helper defaulting to `EBAZ_USE_SUDO=1` on Linux and handing the
+configuration to OpenOCD as `-c "set ::env(...)"` arguments, because a pinned
+`NOPASSWD` rule refuses `--preserve-env` unless it also grants `SETENV`. See
+Bead `ebaz4205-71t.3`.
+
 ### 3. XVC protocol, Vivado, ownership handoff, and OpenOCD recovery
 
 - Run `jtag/xvc/test_xvc.py` against the XVC server in `--fake` mode. This

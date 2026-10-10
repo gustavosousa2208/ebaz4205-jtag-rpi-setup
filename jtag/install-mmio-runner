@@ -39,9 +39,13 @@ fi
 
 candidate=$(mktemp /tmp/ebaz-mmio-sudoers.XXXXXX)
 trap 'rm -f "$candidate"' EXIT HUP INT TERM
-printf '%s ALL=(root) NOPASSWD: %s\n' "$runner_user" "$installed_binary" >"$candidate"
+# SETENV lets the upload scripts pass their configuration to the runner with --preserve-env; without it
+# sudo refuses with "sorry, you are not allowed to set the following environment variables". sudo still
+# strips the variables it always strips (LD_*, and the rest of its env_delete list), so this does not
+# widen what the runner can be told to load.
+printf '%s ALL=(root) NOPASSWD: SETENV: %s\n' "$runner_user" "$installed_binary" >"$candidate"
 if [ -x "$openocd_binary" ]; then
-    printf '%s ALL=(root) NOPASSWD: %s\n' "$runner_user" "$openocd_binary" >>"$candidate"
+    printf '%s ALL=(root) NOPASSWD: SETENV: %s\n' "$runner_user" "$openocd_binary" >>"$candidate"
 fi
 chmod 0440 "$candidate"
 visudo -cf "$candidate"

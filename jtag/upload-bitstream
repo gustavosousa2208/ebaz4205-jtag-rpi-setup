@@ -26,8 +26,29 @@ fi
 
 EBAZ_BITSTREAM=$(ebaz_abs_path "$bitstream")
 EBAZ_BUNDLE_DIR=$bundle_dir
+
+# pl-program.tcl reads every one of these unconditionally; they used to be set only by upload-code,
+# which is why the PL-only path failed with "no such element in array".
+pld_retries=${EBAZ_PLD_RETRIES:-3}
+jtag_rate_ladder=${EBAZ_JTAG_RATE_LADDER:-1000,500,250,100}
+if ! [[ "$pld_retries" =~ ^[1-9][0-9]*$ ]]; then
+    echo "EBAZ_PLD_RETRIES must be a positive integer." >&2
+    exit 2
+fi
+if ! [[ "$jtag_rate_ladder" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+    echo "EBAZ_JTAG_RATE_LADDER must be comma-separated positive integers." >&2
+    exit 2
+fi
+EBAZ_PLD_RETRIES=$pld_retries
+EBAZ_JTAG_RATE_LADDER=$jtag_rate_ladder
+EBAZ_TEST_FAIL_PL_ATTEMPT=${EBAZ_TEST_FAIL_PL_ATTEMPT:-}
+EBAZ_SUCCESS_MARKER=${EBAZ_SUCCESS_MARKER:-$bundle_dir/run/pl-success.txt}
+EBAZ_ENTRY=${EBAZ_ENTRY:-pl-only-load}
+
+mkdir -p "$bundle_dir/run"
 export EBAZ_BITSTREAM EBAZ_BUNDLE_DIR EBAZ_PLD_DEVICE
 export EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL
+export EBAZ_PLD_RETRIES EBAZ_JTAG_RATE_LADDER EBAZ_TEST_FAIL_PL_ATTEMPT EBAZ_SUCCESS_MARKER EBAZ_ENTRY
 
 log_dir="$bundle_dir/logs"
 mkdir -p "$log_dir"
@@ -47,19 +68,17 @@ log_file="$log_dir/${timestamp}-bitstream.log"
 } | tee "$log_file"
 
 set +e
+# The configuration travels on OpenOCD's command line rather than in the environment: the pinned
+# sudoers rule grants NOPASSWD without SETENV, so exported values would not survive elevation.
+mapfile -t env_args < <(ebaz_env_args EBAZ_BUNDLE_DIR EBAZ_BITSTREAM EBAZ_PLD_DEVICE EBAZ_PLD_RETRIES \
+    EBAZ_JTAG_RATE_LADDER EBAZ_JTAG_ADAPTER EBAZ_TEST_FAIL_PL_ATTEMPT EBAZ_SUCCESS_MARKER EBAZ_ENTRY \
+    EBAZ_ADAPTER_CFG EBAZ_CMSIS_DAP_SERIAL)
+openocd_argv=("$EBAZ_OPENOCD" -s "$EBAZ_OPENOCD_SCRIPTS" "${env_args[@]}"
+    -f "$EBAZ_ADAPTER_CFG" -f "$bundle_dir/ebaz4205.cfg" -f "$bundle_dir/upload-bitstream.cfg")
 if [ "$EBAZ_USE_SUDO" = 1 ]; then
-    sudo --preserve-env=EBAZ_BITSTREAM,EBAZ_BUNDLE_DIR,EBAZ_PLD_DEVICE,EBAZ_ADAPTER_CFG,EBAZ_CMSIS_DAP_SERIAL \
-        "$EBAZ_OPENOCD" \
-        -s "$EBAZ_OPENOCD_SCRIPTS" \
-        -f "$EBAZ_ADAPTER_CFG" \
-        -f "$bundle_dir/ebaz4205.cfg" \
-        -f "$bundle_dir/upload-bitstream.cfg" 2>&1 | tee -a "$log_file"
+    sudo -n "${openocd_argv[@]}" 2>&1 | tee -a "$log_file"
 else
-    "$EBAZ_OPENOCD" \
-        -s "$EBAZ_OPENOCD_SCRIPTS" \
-        -f "$EBAZ_ADAPTER_CFG" \
-        -f "$bundle_dir/ebaz4205.cfg" \
-        -f "$bundle_dir/upload-bitstream.cfg" 2>&1 | tee -a "$log_file"
+    "${openocd_argv[@]}" 2>&1 | tee -a "$log_file"
 fi
 status=${PIPESTATUS[0]}
 set -e

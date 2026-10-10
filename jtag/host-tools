@@ -48,9 +48,10 @@ ebaz_init_host() {
     fi
 
     if [ -z "${EBAZ_USE_SUDO:-}" ]; then
-        if [ "${EBAZ_JTAG_ADAPTER:-}" = bananapi-m2-zero-mmio ]; then
-            EBAZ_USE_SUDO=0
-        elif [ "$EBAZ_HOST_OS" = Linux ]; then
+        # The installed runners need /dev/mem, which the MMIO-accelerated driver opens as root, so on
+        # Linux they are always launched through the pinned NOPASSWD rule. Set EBAZ_USE_SUDO=0
+        # explicitly to run a runner that does not need that privilege.
+        if [ "$EBAZ_HOST_OS" = Linux ]; then
             EBAZ_USE_SUDO=1
         else
             EBAZ_USE_SUDO=0
@@ -105,6 +106,22 @@ ebaz_sha256_report() {
 
 ebaz_iso_time() {
     date '+%Y-%m-%dT%H:%M:%S%z'
+}
+
+# Turn a list of exported EBAZ_* names into OpenOCD "-c 'set ::env(NAME) {value}'" arguments.
+# A sudoers rule that pins a runner grants NOPASSWD, and sudo refuses --preserve-env unless the rule
+# also grants SETENV; values exported by a wrapper therefore do not survive elevation. OpenOCD is the
+# process that needs them, so hand them over on its command line instead.
+ebaz_env_args() {
+    local name
+    for name in "$@"; do
+        # Emit variables that are set even when empty: some of them must exist with an empty value
+        # (EBAZ_TEST_FAIL_PL_ATTEMPT is a fault-injection switch), and Tcl treats a missing element as
+        # an error rather than as an empty string.
+        if [ -n "${!name+x}" ]; then
+            printf -- '-c\nset ::env(%s) {%s}\n' "$name" "${!name}"
+        fi
+    done
 }
 
 ebaz_process_alive() {
