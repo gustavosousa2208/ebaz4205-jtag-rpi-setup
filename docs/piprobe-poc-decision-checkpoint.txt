@@ -1,0 +1,51 @@
+PiProbe OpenOCD PoC — decision checkpoint
+Date: 2026-10-09
+Status: choices pending; surface this checkpoint before continuing Bead ebaz4205-3pb.4.
+
+Goal
+Prove that an agent on the Windows host can use OpenOCD over the LAN to
+identify the EBAZ4205 JTAG chain through the Banana Pi, without manually
+managing the network transport. Keep this PoC narrow; it is not the generic
+multi-target engine or the future lstty integration.
+
+Recommended choices
+1. Target/action: Banana Pi M2 Zero + EBAZ4205; read-only OpenOCD TAP scan and
+   verify IDCODEs 0x13722093 and 0x4ba00477. Do not program, reset, or debug the
+   target in this first proof.
+2. Host UX: a thin `piprobe openocd` wrapper invokes host OpenOCD and hides
+   discovery, tunnel setup, and XVC endpoint details. The project's target
+   configuration remains on the host. Exact vanilla `openocd -f target.cfg`
+   transparency is a larger follow-up.
+3. Transport/security: retain XVC on Pi loopback and use authenticated SSH
+   forwarding. Do not bind raw unauthenticated XVC to the LAN. PiProbe should
+   manage service/tunnel lifecycle and enforce one exclusive owner.
+4. Disconnect behavior: fail clearly, do not replay automatically, and verify
+   that the session releases ownership. Durable jobs/reconnect after Wi-Fi
+   loss are deferred until a mutating operation needs them.
+5. Breadth: prove the initial flow on Windows first; keep the client portable
+   and smoke-test macOS/Linux before declaring the integration complete. Add a
+   concrete NXP or STM32 SWD target only after the JTAG vertical slice works.
+
+Trade-offs to decide
+- Wider PoC (flash/debug, multiple targets/hosts) proves more but mixes
+  transport, target procedure, and recovery risks before the link is validated.
+- A PiProbe wrapper gives agents a stable command while allowing OpenOCD to
+  use its existing XVC TCP driver; it is not USB emulation and does not make
+  vendor-specific APIs compatible.
+- Raw XVC on the LAN is simpler but unauthenticated; SSH forwarding adds
+  setup and latency while reusing the existing trust boundary.
+- Resuming jobs after Wi-Fi loss needs job IDs, leases, result retention,
+  idempotency, and an explicit unknown-outcome state; it is outside this
+  read-only PoC unless chosen otherwise.
+
+Success criteria
+- PiProbe selects a trusted Banana Pi; no manual SSH command or remote shell
+  startup is needed from the agent.
+- Host OpenOCD connects through XVC and reports both expected TAP IDCODEs.
+- A second concurrent session is rejected before taking the JTAG pins.
+- Closing OpenOCD or losing the connection leaves no orphaned server/lock and
+  does not trigger a reset, programming action, or automatic retry.
+
+Related Bead: ebaz4205-3pb.7 (P0), blocks ebaz4205-3pb.4 until Gustavo chooses
+the PoC scope. See also the technical assessment in
+docs/assessment-2026-10-09.md.

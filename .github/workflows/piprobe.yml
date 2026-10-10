@@ -1,0 +1,39 @@
+name: PiProbe host client
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - ".github/workflows/piprobe.yml"
+      - "piprobe/**"
+      - "pyproject.toml"
+  pull_request:
+    paths:
+      - ".github/workflows/piprobe.yml"
+      - "piprobe/**"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+jobs:
+  cross-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install PiProbe
+        run: python -m pip install .
+      - name: Run portable discovery tests
+        run: python -m unittest discover -s piprobe -p "test_*.py" -v
+      - name: Check installed command
+        run: |
+          piprobe --version
+          piprobe discover --help

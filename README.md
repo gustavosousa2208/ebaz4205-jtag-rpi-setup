@@ -140,6 +140,11 @@ under [`jtag/xvc/`](jtag/xvc/README.md) and Bead `ebaz4205-71t.1`.
 The operational failure/recovery test matrix is
 [docs/probe-hardening.md](docs/probe-hardening.md).
 
+PiProbe network discovery design and fallback paths are documented in
+[docs/piprobe-discovery.md](docs/piprobe-discovery.md) and tracked under Bead
+`ebaz4205-3pb`. The host-side mDNS discovery command is described in
+[piprobe/README.md](piprobe/README.md).
+
 ## Project layout
 
 - `app/` — C application, startup assembly, linker script

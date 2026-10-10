@@ -1,0 +1,14 @@
+[Unit]
+Description=PiProbe DNS-SD discovery announcement
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/piprobe announce
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "piprobe"
+description = "Discover and use network-attached PiProbe nodes"
+readme = "piprobe/README.md"
+requires-python = ">=3.11"
+dependencies = ["zeroconf>=0.130,<1"]
+dynamic = ["version"]
+
+[project.scripts]
+piprobe = "piprobe.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["piprobe*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "piprobe.__version__"}
