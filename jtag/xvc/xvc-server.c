@@ -1,16 +1,26 @@
 /*
- * Xilinx Virtual Cable (XVC 1.0) server for the EBAZ4205 through the Banana Pi M2 Zero's Port C GPIO.
+ * JTAG-over-network server for the EBAZ4205 through the Banana Pi M2 Zero's Port C GPIO.
  *
- * Lets Vivado / XSDB / hw_server use Board 1's JTAG like any other cable. The GPIO code is taken from the
+ * One binary, two protocols, selected with --protocol:
+ *   xvc             Xilinx Virtual Cable 1.0: Vivado / XSDB / hw_server.
+ *   remote-bitbang  OpenOCD's remote_bitbang driver: no stock Windows OpenOCD build
+ *                   ships the xvc adapter driver, but every build has remote_bitbang.
+ * Either one lets a host tool use Board 1's JTAG like any other cable. The GPIO code is taken from the
  * proven ~/ebaz-mmio-jtag/mmio-jtag-idcode.c (same PIO page, same pins, same GPIO-line request that a cold
  * boot needs). Pins: TDI=PC0 (header 19), TDO=PC1 (21), TCK=PC2 (23), TMS=PC3 (24).
  *
  * SECURITY: this runs as root (it needs /dev/mem for one PIO page). It therefore
  *   - binds ONLY to 127.0.0.1 (reach it through an ssh tunnel), one client at a time,
+ *   - holds an exclusive lock on the pins, so an XVC session and an OpenOCD session can never
+ *     drive them at the same time: a second server refuses to start instead,
+ *   - refuses remote_bitbang reset asserts, because no reset line is wired to the target,
  *   - bounds-checks every length and closes the connection on any protocol violation,
  *   - never executes or interprets client data, it only toggles four pins.
  *
- * usage: ebaz-xvc-server [--port N] [--rate-khz N] [--fake]
+ * usage: ebaz-xvc-server [--protocol xvc|remote-bitbang] [--port N] [--rate-khz N] [--fake]
+ *   --port N      default 2542 for xvc, 4444 for remote-bitbang (OpenOCD's default)
+ *   --rate-khz N  xvc: internal clock pacing. remote-bitbang: unused, that client owns the clock
+ *                 through 'adapter speed' and 'remote_bitbang use_remote_sleep'.
  *   --fake   no hardware and no root: TDO is TDI delayed by one bit (for protocol tests).
  */
 #define _POSIX_C_SOURCE 200809L
@@ -55,6 +65,12 @@ static int gpio_outputs_fd = -1, gpio_input_fd = -1;
 static uint64_t half_period_ns, next_edge_ns;
 static int fake_last_tdi;
 static volatile sig_atomic_t stop_requested;
+static const char *protocol = "xvc";     /* "xvc" or "remote-bitbang" */
+static char proc_name[32] = "xvc-server";
+static unsigned long listen_port;        /* for the pin-lock message */
+static int pin_lock_fd = -1;
+static int rbb_fake_tck;                 /* remote_bitbang fake-mode edge detector */
+static int rbb_fake_tdo, rbb_fake_tdi;
 
 static uint64_t monotonic_ns(void)
 {
@@ -94,6 +110,81 @@ static int clock_bit(unsigned int tms, unsigned int tdi)
 	pio[PC_DAT_OFF / 4] = value;
 	__sync_synchronize();
 	return tdo;
+}
+
+/* ---- remote_bitbang pin access ----
+ * OpenOCD drives the clock itself (see 'adapter speed' and 'remote_bitbang use_remote_sleep'), so a pin
+ * state is applied immediately here and no pacing is added. */
+static void apply_pins(unsigned int tck, unsigned int tms, unsigned int tdi)
+{
+	if (fake) {
+		/* Same one-bit-delay model as clock_bit, but the edges come from the client: the TDO bit
+		 * visible after a rising edge is the TDI sampled at the previous rising edge. */
+		if (!rbb_fake_tck && tck) {
+			rbb_fake_tdo = rbb_fake_tdi;
+			rbb_fake_tdi = (int)(tdi & 1u);
+		}
+		rbb_fake_tck = (int)(tck & 1u);
+		return;
+	}
+	uint32_t value = pio[PC_DAT_OFF / 4] & ~JTAG_OUTPUT_MASK;
+	value |= (tck & 1u) << TCK_BIT;
+	value |= (tms & 1u) << TMS_BIT;
+	value |= (tdi & 1u) << TDI_BIT;
+	pio[PC_DAT_OFF / 4] = value;
+	__sync_synchronize();
+}
+
+static int tdo_level(void)
+{
+	if (fake)
+		return rbb_fake_tdo;
+	return (int)((pio[PC_DAT_OFF / 4] >> TDO_BIT) & 1u);
+}
+
+/* Exclusive lock on the JTAG pins. An XVC session (Vivado) and a remote_bitbang session (OpenOCD) must
+ * never drive the same pins at once, and the lock also catches a server someone forgot about. */
+static int acquire_pin_lock(void)
+{
+	const char *path = access("/run", W_OK) == 0 ? "/run/ebaz-jtag-pins.lock" : NULL;   /* root path */
+	char fallback[80];
+	if (!path) {
+		snprintf(fallback, sizeof(fallback), "/tmp/ebaz-jtag-pins-%lu.lock", (unsigned long)getuid());
+		path = fallback;
+	}
+	pin_lock_fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+	if (pin_lock_fd < 0) {
+		fprintf(stderr, "open %s: %s\n", path, strerror(errno));
+		return -1;
+	}
+	struct flock lock = { .l_type = F_WRLCK, .l_whence = SEEK_SET };
+	if (fcntl(pin_lock_fd, F_SETLK, &lock) != 0) {
+		char holder[160] = "";
+		if (pread(pin_lock_fd, holder, sizeof(holder) - 1, 0) > 0) {
+			char *nl = strchr(holder, '\n');
+			if (nl)
+				*nl = '\0';
+		}
+		fprintf(stderr, "JTAG pins already in use (%s in %s); refusing to start\n",
+			holder[0] ? holder : "held by another process", path);
+		close(pin_lock_fd);
+		pin_lock_fd = -1;
+		return -1;
+	}
+	if (ftruncate(pin_lock_fd, 0) != 0 ||
+	    dprintf(pin_lock_fd, "pid %ld protocol %s port %lu\n", (long)getpid(), protocol, listen_port) < 0) {
+		fprintf(stderr, "cannot record the holder in %s: %s\n", path, strerror(errno));
+		return -1;
+	}
+	return 0;
+}
+
+static void release_pin_lock(void)
+{
+	if (pin_lock_fd >= 0) {
+		close(pin_lock_fd);          /* closing drops the record lock */
+		pin_lock_fd = -1;
+	}
 }
 
 static void restore_pins(void)
@@ -272,25 +363,101 @@ static void serve(int fd)
 	}
 }
 
+/* Serves one remote_bitbang client (host OpenOCD) until it quits or breaks the protocol.
+ * Wire contract: OpenOCD src/jtag/drivers/remote_bitbang.c. Every 'R' must produce exactly one response
+ * byte and the stream must carry no other bytes, otherwise the client loses framing. Responses are
+ * flushed at the end of each read chunk: the client always flushes its command batch before it blocks
+ * reading a sample, so this cannot deadlock and still costs one packet per batch. */
+static int serve_remote_bitbang(int fd)
+{
+	static uint8_t in[256], out[256];
+	size_t pending = 0;
+	for (;;) {
+		ssize_t n = read(fd, in, sizeof(in));
+		if (n == 0)
+			return 0;                                  /* client closed the connection */
+		if (n < 0) {
+			if (errno == EINTR && !stop_requested)
+				continue;
+			return -1;
+		}
+		for (ssize_t i = 0; i < n; ++i) {
+			unsigned char c = in[i];
+			if (c >= '0' && c <= '7') {
+				apply_pins((c >> 2) & 1u, (c >> 1) & 1u, c & 1u);
+			} else if (c == 'R') {
+				out[pending++] = tdo_level() ? '1' : '0';
+			} else if (c == 'r') {
+				/* both reset lines deasserted: nothing is wired, nothing to do */
+			} else if (c == 's' || c == 't' || c == 'u') {
+				fprintf(stderr, "%s: reset assert 0x%02x refused, no reset line is wired to the target\n", proc_name, c);
+				return -1;
+			} else if (c == 'B' || c == 'b') {
+				/* status LED on/off: this probe has no LED */
+			} else if (c == 'Z') {
+				struct timespec ms = { .tv_sec = 0, .tv_nsec = 1000000L };   /* 1 ms */
+				nanosleep(&ms, NULL);
+			} else if (c == 'z') {
+				struct timespec us = { .tv_sec = 0, .tv_nsec = 1000L };      /* 1 us */
+				nanosleep(&us, NULL);
+			} else if (c == 'Q') {
+				if (pending && write_full(fd, out, pending) != 0)
+					return -1;
+				return 0;
+			} else if (c == 'O' || c == 'o' || c == 'c' || c == 'd') {
+				fprintf(stderr, "%s: SWD command 0x%02x rejected, this server is JTAG only\n", proc_name, c);
+				return -1;
+			} else {
+				fprintf(stderr, "%s: unknown command 0x%02x, closing\n", proc_name, c);
+				return -1;
+			}
+			if (pending == sizeof(out)) {
+				if (write_full(fd, out, pending) != 0)
+					return -1;
+				pending = 0;
+			}
+		}
+		if (pending) {
+			if (write_full(fd, out, pending) != 0)
+				return -1;
+			pending = 0;
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
-	unsigned long port = 2542, rate_khz = 1000;
+	unsigned long port = 0, rate_khz = 1000;
+	bool port_given = false;
 	for (int i = 1; i < argc; ++i) {
 		char *end;
 		if (!strcmp(argv[i], "--fake")) {
 			fake = true;
+		} else if (!strcmp(argv[i], "--protocol") && i + 1 < argc) {
+			protocol = argv[++i];
+			if (strcmp(protocol, "xvc") != 0 && strcmp(protocol, "remote-bitbang") != 0) {
+				fprintf(stderr, "bad --protocol (xvc|remote-bitbang)\n");
+				return 2;
+			}
 		} else if (!strcmp(argv[i], "--port") && i + 1 < argc) {
 			port = strtoul(argv[++i], &end, 10);
 			if (*end || port < 1024 || port > 65535) { fprintf(stderr, "bad --port\n"); return 2; }
+			port_given = true;
 		} else if (!strcmp(argv[i], "--rate-khz") && i + 1 < argc) {
 			rate_khz = strtoul(argv[++i], &end, 10);
 			if (*end || rate_khz == 0 || rate_khz > 10000) { fprintf(stderr, "bad --rate-khz (1..10000)\n"); return 2; }
 		} else {
-			fprintf(stderr, "usage: %s [--port N] [--rate-khz N] [--fake]\n", argv[0]);
+			fprintf(stderr, "usage: %s [--protocol xvc|remote-bitbang] [--port N] [--rate-khz N] [--fake]\n", argv[0]);
 			return 2;
 		}
 	}
+	bool rbb = strcmp(protocol, "remote-bitbang") == 0;
+	if (!port_given)
+		port = rbb ? 4444 : 2542;
+	listen_port = port;
+	snprintf(proc_name, sizeof(proc_name), "%s-server", protocol);
 	half_period_ns = 500000ull / rate_khz;
+	const char *pins = fake ? "FAKE mode (no hardware)" : "Port C GPIO (TDI=PC0 TDO=PC1 TCK=PC2 TMS=PC3)";
 
 	struct sigaction sa = { .sa_handler = handle_signal };
 	sigemptyset(&sa.sa_mask);
@@ -299,11 +466,16 @@ int main(int argc, char **argv)
 	sigaction(SIGHUP, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
 
-	if (!fake && setup_pins() != 0)
+	/* Before the pins are muxed: a second server, whatever protocol it speaks, must never drive them. */
+	if (acquire_pin_lock() != 0)
 		return 2;
+	if (!fake && setup_pins() != 0) {
+		release_pin_lock();
+		return 2;
+	}
 
 	int srv = socket(AF_INET, SOCK_STREAM, 0);
-	if (srv < 0) { perror("socket"); restore_pins(); return 2; }
+	if (srv < 0) { perror("socket"); restore_pins(); release_pin_lock(); return 2; }
 	int one = 1;
 	setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 	struct sockaddr_in addr = { .sin_family = AF_INET, .sin_port = htons((uint16_t)port) };
@@ -311,10 +483,14 @@ int main(int argc, char **argv)
 	if (bind(srv, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(srv, 1) != 0) {
 		perror("bind/listen");
 		restore_pins();
+		release_pin_lock();
 		return 2;
 	}
-	printf("xvc-server: %s, listening on %s:%lu, rate %lu kHz, max vector %u bytes\n",
-	       fake ? "FAKE mode (no hardware)" : "Port C GPIO (TDI=PC0 TDO=PC1 TCK=PC2 TMS=PC3)", "127.0.0.1", port, rate_khz, MAX_VECTOR_BYTES);
+	if (rbb)
+		printf("%s: %s, listening on 127.0.0.1:%lu, clock driven by the client\n", proc_name, pins, port);
+	else
+		printf("%s: %s, listening on 127.0.0.1:%lu, rate %lu kHz, max vector %u bytes\n",
+		       proc_name, pins, port, rate_khz, MAX_VECTOR_BYTES);
 	fflush(stdout);
 
 	while (!stop_requested) {
@@ -326,16 +502,20 @@ int main(int argc, char **argv)
 			break;
 		}
 		setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-		printf("xvc-server: client connected\n");
+		printf("%s: client connected\n", proc_name);
 		fflush(stdout);
 		next_edge_ns = monotonic_ns();
-		serve(c);
+		if (rbb)
+			serve_remote_bitbang(c);
+		else
+			serve(c);
 		close(c);
-		printf("xvc-server: client disconnected\n");
+		printf("%s: client disconnected\n", proc_name);
 		fflush(stdout);
 	}
 	close(srv);
 	restore_pins();
-	printf("xvc-server: stopped, pins restored\n");
+	release_pin_lock();
+	printf("%s: stopped, pins restored\n", proc_name);
 	return 0;
 }
