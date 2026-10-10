@@ -48,22 +48,36 @@ client discovery, programming, ownership handoff, and remaining cleanup checks.
 Stop the server with Ctrl-C and wait for its `stopped, pins restored` message
 before using OpenOCD.
 
-## LAN mode (no tunnel)
+## Secure host access
 
-`--bind IPV4` makes the server listen on a chosen address instead of
-`127.0.0.1`. `start-xvc.ps1` wraps this for the Vivado computer:
+Raw XVC has no authentication. PiProbe and the supported workflow keep the
+server bound to `127.0.0.1` on the Pi and carry traffic through SSH. Start the
+server using the loopback-only command above, then on the host run:
 
 ```powershell
-.\jtag\xvc\start-xvc.ps1 [-Pi gusta-bpi] [-Port 2542] [-RateKhz 1000]
+.\jtag\xvc\start-xvc.ps1 [-Pi gusta-bpi] [-Port 2542]
 ```
 
-It checks over SSH that the server and its sudoers rule are installed and that
-the installed binary supports `--bind` (otherwise it prints the build and
-`sudo ./install-xvc.sh` commands to run on the Pi), refuses to start if OpenOCD
-or another XVC server holds the probe, finds the Pi's LAN IP from its default
-route, and runs the server bound to that IP. Then add an XVC cable at
-`<printed IP>:2542` in Hardware Manager; no `ssh -L` is needed. Ctrl-C stops it.
+The helper opens an authenticated local SSH forward; it does not start XVC or
+bind it to a LAN address. In Vivado, connect to `127.0.0.1:2542`. SSH must be
+configured to verify the Pi's host key and use an authorized public key. A
+missing server, denied SSH access, or failed tunnel must make access fail
+closed.
 
-**Security:** XVC has no authentication and the server runs as root, so anyone
-who can reach that address and port can drive the JTAG pins. Use it only on a
-trusted LAN. Without `--bind` the server stays loopback-only.
+The XVC server accepts only loopback binding; attempts to pass a bind address
+are rejected. This keeps its unauthenticated protocol out of reach from LAN
+clients even if a caller accidentally supplies an external address.
+
+`install-xvc.sh` enforces that property instead of assuming it: after copying
+the binary it runs `--fake --bind 127.0.0.1` on a scratch port and refuses to
+report success unless the binary exits 2 (argument rejected). An older binary
+that still honours `--bind` therefore cannot be installed as the supported
+path. Re-check any installation with:
+
+```sh
+timeout 2 /usr/local/libexec/ebaz-xvc-server --fake --port 2549 --bind 127.0.0.1
+echo "exit $?  # 2 = rejected; 124 = the server ran and accepted --bind"
+```
+
+The check uses `--fake` (no pins, no `/dev/mem`) and a loopback address, so it
+never opens a LAN port of its own.

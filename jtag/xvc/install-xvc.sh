@@ -43,6 +43,21 @@ visudo -cf "$candidate"
 install -o root -g root -m 0440 "$candidate" "$sudoers"
 visudo -cf "$sudoers"
 
+# Negative access test: the installed server must reject any bind address.
+# XVC has no authentication, so a binary that honours --bind can expose JTAG
+# control to every host on the LAN. --fake touches no pins or hardware, and the
+# address below is loopback, so this check never opens a network port itself.
+set +e
+timeout 2 "$installed" --fake --port 2549 --bind 127.0.0.1 >/dev/null 2>&1
+bind_rc=$?
+set -e
+if [ "$bind_rc" -ne 2 ]; then
+    echo "REFUSING to install: $installed did not reject --bind (exit $bind_rc, expected 2)." >&2
+    echo "That binary can serve unauthenticated XVC on a LAN address; rebuild from the current xvc-server.c." >&2
+    exit 3
+fi
+
 echo "Installed: $installed"
 echo "Sudoers:   $sudoers  ($user may run exactly that binary as root without a password)"
+echo "Verified:  rejects --bind, so it can only listen on 127.0.0.1"
 echo "Check:     sudo -n $installed --fake --port 2542   (then Ctrl-C)"
