@@ -38,12 +38,22 @@ running board on 2026-10-10: no device-tree pinctrl state references any of thes
 |---:|:---:|---:|:---:|---|
 | 31 | PA8 | 8 | SWCLK | the clock; JTAG calls it TCK |
 | 33 | PA9 | 9 | SWDIO | the data line; JTAG calls it TMS, and it is **bidirectional** |
-| 7 | PA6 | 6 | reserved | spare, the obvious place for NRST later |
+| 7 | PA6 | 6 | NRST | reset, through a **330 Ω series resistor** |
 | 29 | PA7 | 7 | reserved | an input from the target, so the natural pin for SWO trace later |
 | GND (6, 9, 14, 25, 30, 34, 39; pin 20 is shared with the EBAZ) | – | – | GND | one common ground |
 
 A minimum SWD link is SWCLK, SWDIO and ground. The MCU is powered separately; its VDD must be 3.3 V
 (the H2+ pins are not 5 V tolerant) and the power rails must never be bridged.
+
+NRST makes the second port a proper debug probe rather than a wire you have to yank: with it, `reset`,
+`reset halt` and `reset run` work, and `connect_assert_srst` can catch a target whose running firmware
+disables SWD. It needs the resistor first — do not wire header 7 straight to the target's NRST — and
+the adapter file keeps `adapter gpio srst` and `reset_config` commented out until it is in place, so the
+configuration always describes the wiring that exists. The resistor is not optional in spirit:
+`linuxgpiod_reset()` drives the line push-pull and has no open-drain mode, while the MCU holds its own
+reset line high through an internal pull-up and pulls it low for its own resets — 330 Ω keeps those two
+from fighting (about 10 mA worst case) and the target still sees a clean low because its pull-up is in
+the tens of kilo-ohms. Deassert drives the line high into that pull-up, which is harmless.
 
 JTAG to SWD, and the difference that matters:
 
@@ -84,10 +94,12 @@ back with:
 gpioget -c gpiochip0 8 9 >/dev/null     # requests both as inputs; verified to report input afterwards
 ```
 
-Not yet available over the network: the PiProbe server speaks XVC and remote_bitbang for JTAG only
-and refuses reset asserts, so SWD needs the driver's four SWD commands implemented in the server
-(`'d'` SWD write, `'O'`/`'o'` SWDIO direction, `'c'` SWDIO read) plus the same runtime direction
-switch on the SWDIO pin, and a way for a session to select the SWD transport and the second pin set.
+Not yet available over the network: the PiProbe server speaks XVC and remote_bitbang for JTAG only and
+refuses reset asserts, so SWD needs the driver's four SWD commands implemented in the server (`'d'` SWD
+write, `'O'`/`'o'` SWDIO direction, `'c'` SWDIO read) plus the same runtime direction switch on the
+SWDIO pin, and a way for a session to select the SWD transport and the second pin set. The same work
+gives the network path a usable reset: `'s'` (SRST assert) and its release would drive PA6 once the
+server knows an NRST pin exists, which is why the refusal message names the missing line today.
 Tracked as Bead `ebaz4205-s85`.
 
 Production settings:
