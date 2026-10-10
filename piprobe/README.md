@@ -91,19 +91,32 @@ pipx install "git+https://github.com/gustavosousa2208/ebaz4205-jtag-rpi-setup@ma
 ### Linux hosts without pipx
 
 Some Debian-based images, including the probes themselves, have no `pipx`; installing it needs an
-administrator (`sudo apt install -y pipx python3-venv`). When that is not available, a user-local
-install is the supported fallback:
+administrator:
 
 ```sh
-python3 -m pip install --user .
-~/.local/bin/piprobe --version
+sudo apt install -y pipx python3-venv
+pipx ensurepath
 ```
 
-That puts the package in the user's own site-packages rather than an isolated environment, so it can
-collide with other user-installed packages and must be removed before switching to pipx:
+If `pipx` cannot be installed, use a virtual environment — a plain `pip install --user` is refused on
+images that enforce PEP 668 (`error: externally-managed-environment`), and `--break-system-packages`
+is not a supported way around it:
 
 ```sh
-python3 -m pip uninstall -y piprobe   # then: pipx install <source>
+python3 -m venv ~/.venvs/piprobe
+~/.venvs/piprobe/bin/pip install .
+~/.venvs/piprobe/bin/piprobe --version
+```
+
+Whichever route is used, remove an older user-local install first, because it owns the launcher that
+`pipx` refuses to overwrite (`File exists at ~/.local/bin/piprobe … Not modifying`). `pip uninstall` is
+itself blocked by PEP 668, so remove it by hand and let `pipx` recreate the command:
+
+```sh
+rm -f ~/.local/bin/piprobe
+rm -rf ~/.local/lib/python3*/site-packages/piprobe ~/.local/lib/python3*/site-packages/piprobe-*.dist-info
+pipx install --force "git+https://github.com/gustavosousa2208/ebaz4205-jtag-rpi-setup@main"
+head -1 ~/.local/bin/piprobe        # must point into the pipx venv
 ```
 
 Copying package files into site-packages is **not** a supported install path: it bypasses the metadata
