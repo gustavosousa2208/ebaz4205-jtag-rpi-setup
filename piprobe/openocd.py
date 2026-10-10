@@ -194,16 +194,17 @@ def ssh_base(ssh_port: int | None) -> list[str]:
     return args
 
 
-def resolve_node(requested: str | None, ssh_user: str | None, timeout: float) -> Node:
+def resolve_node(requested: str | None, ssh_user: str | None, timeout: float,
+                 peers_path: Path | None = None, aliases_path: Path | None = None) -> Node:
     candidates: list[dict[str, object]] = []
     mdns_error: str | None = None
     try:
         candidates += discover.discover_mdns(timeout)
     except RuntimeError as exc:
         mdns_error = str(exc)
-    candidates += discover.load_peer_candidates(discover.default_peers_path())
+    candidates += discover.load_peer_candidates(peers_path or discover.default_peers_path())
     try:
-        aliases = discover.load_aliases(discover.default_aliases_path())
+        aliases = discover.load_aliases(aliases_path or discover.default_aliases_path())
     except ValueError as exc:
         raise UsageError(str(exc)) from exc
     candidates = discover.apply_aliases(discover.merge_candidates(candidates), aliases)
@@ -363,6 +364,15 @@ class Tunnel:
                     time.sleep(0.2)
         raise TransportError(f"the SSH forward did not accept on 127.0.0.1:{self.local_port}: " + self._errors())
 
+    def finished_early(self) -> bool:
+        """True when the forward died while the session was still running.
+
+        A dead forward means the transport was interrupted: whatever OpenOCD reported afterwards
+        cannot be trusted, and the session must not be mistaken for a clean one just because OpenOCD
+        exited 0 after logging socket errors.
+        """
+        return self._proc is not None and self._proc.poll() is not None
+
     def _errors(self) -> str:
         if self._proc is None or self._proc.stderr is None or self._proc.poll() is None:
             return "no error reported"
@@ -480,6 +490,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-f", "--file", action="append", default=[], dest="scripts",
                         help="host OpenOCD script to run after the transport configuration (repeatable); "
                              "with -f the built-in TAP scan is not used")
+    parser.add_argument("--peers-file", type=Path, default=discover.default_peers_path(),
+                        help="pinned-peer file to read (default: the native PiProbe config path)")
+    parser.add_argument("--aliases-file", type=Path, default=discover.default_aliases_path(),
+                        help="local aliases file to read (default: the native PiProbe config path)")
     parser.add_argument("--opencd", help="openocd binary to use (default: the one on PATH)")
     parser.add_argument("--discovery-timeout", type=float, default=None, help="mDNS browse deadline in seconds")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
@@ -520,7 +534,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not 1 <= local_port <= 65535:
             raise UsageError("--local-port must be 1..65535")
         openocd = find_openocd(args.opencd)
-        result.node = resolve_node(args.node, args.user, args.discovery_timeout or 2.5)
+        result.node = resolve_node(args.node, args.user, args.discovery_timeout or 2.5,
+                                   peers_path=args.peers_file.expanduser(),
+                                   aliases_path=args.aliases_file.expanduser())
         commands = transport_commands(local_port) + ([] if args.scripts else scan_commands())
         result.transport = (f"remote_bitbang over SSH (127.0.0.1:{local_port} -> "
                             f"probe 127.0.0.1:{args.rbb_port}), openocd {openocd}")
@@ -554,6 +570,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         exit_code, output = run_openocd(openocd, commands, list(args.scripts), args.verbose)
         result.openocd_exit = exit_code
         result.output = output
+        if tunnel.finished_early():
+            result.problems.append("the SSH forward died during the session, so the transport was "
+                                   "interrupted and this result is not trustworthy")
         if args.scripts:
             if exit_code != 0:
                 result.problems.append(f"openocd exited with {exit_code}")

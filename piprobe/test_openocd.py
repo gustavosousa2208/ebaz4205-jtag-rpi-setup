@@ -255,6 +255,31 @@ class NodeResolutionTests(unittest.TestCase):
         plain = dict(row, name="gusta-bpi", node_id="")
         self.assertEqual(self.resolve([plain], "gusta-bpi").name, "gusta-bpi")
 
+    def test_a_custom_peers_file_is_honoured(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "peers.json"
+            path.write_text(json.dumps({"peers": [{"name": "by-ip", "host": "192.168.0.101", "port": 22,
+                                                   "transport": "ssh",
+                                                   "identity": "ssh-ed25519 SHA256:abc"}]}), encoding="utf-8")
+            with patch.object(openocd.discover, "discover_mdns", return_value=[]), \
+                 patch.object(openocd.discover, "load_aliases", return_value={}):
+                node = openocd.resolve_node("by-ip", None, 0.1, peers_path=path)
+                self.assertEqual((node.name, node.host, node.port), ("by-ip", "192.168.0.101", 22))
+
+    def test_a_forward_that_died_is_reported_as_an_interrupted_transport(self) -> None:
+        node = openocd.Node(name="n", host="192.168.0.101", port=22, source="mdns")
+        live = openocd.Tunnel(node, None, 4444, 4444, verbose=False)
+        live._proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            self.assertFalse(live.finished_early(), "a running forward is not an interruption")
+        finally:
+            live.stop()
+        dead = openocd.Tunnel(node, None, 4444, 4444, verbose=False)
+        dead._proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead._proc.wait(timeout=30)
+        self.assertTrue(dead.finished_early(), "a dead forward must surface as an interruption")
+        dead._proc = None
+
     def test_unknown_request_lists_what_was_found(self) -> None:
         with self.assertRaises(openocd.UsageError) as caught:
             self.resolve([self.row("PiProbe-5ef16103", "192.168.0.101")], "nope")

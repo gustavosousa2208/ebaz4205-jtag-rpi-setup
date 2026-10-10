@@ -55,6 +55,15 @@ a host trusts. Operators can also give a node a purely local name with
 
 Treat every advertisement and address as an untrusted candidate. The host confirms the node identity with the control service before accepting detailed hardware metadata or connecting to a capability endpoint. Detailed model, endpoint, and readiness data come from that service, not from unchecked TXT fields. A repeated stable ID with a different key or conflicting endpoint is an identity conflict, not an automatic replacement.
 
+Known limitation, measured on 2026-10-10: a client dials the first address a record carries. A record
+that lists an unreachable address first makes a healthy probe look unreachable, and a host whose
+`known_hosts` knows the probe by name is not trusted at that address. Both are fixed by dialling every
+identity the record offers — advertised name first, then each address — with strict host-key checking
+at every step; tracked as Bead `ebaz4205-3pb.12`. Until then, pin the address the record carries in
+`known_hosts` and prefer a peer entry when the probe is multi-homed. IPv6-only links are untested:
+the client browses both families and the unit tests cover the address handling, but no IPv6-only
+network was available (Bead `ebaz4205-3pb.13`).
+
 The discovery state is separate from control authorization. Report candidates as `discovered`, `reachable`, `untrusted`, `trusted`, and, where applicable, `busy` or `ready`. A stale advertisement alone must never imply that the probe is reachable or safe to use.
 
 The service API reports capabilities as named, versioned resources rather than encoding a JTAG-only schema. JTAG is the first capability; SWD and RTT remain future capabilities already tracked in Bead `ebaz4205-s85`.

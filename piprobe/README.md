@@ -67,7 +67,14 @@ ssh-keygen -F 192.168.0.101 || ssh-keyscan -t ed25519 192.168.0.101 >> ~/.ssh/kn
 ```
 
 One session per host is enforced with a lock file next to the peer file, and the
-probe refuses a second service on its own.
+probe refuses a second service on its own. A forward that dies before the
+session ends fails the run: OpenOCD can log socket errors and still exit 0, so
+the client checks the forward itself rather than trusting that exit code, and
+reports the session as an interrupted transport.
+
+`--peers-file` and `--aliases-file` select explicit configuration files (the
+same options `piprobe discover` takes), which is what makes a session testable
+against a scratch configuration without touching the real one.
 
 Install the globally callable `piprobe` command through `pipx`; it exposes a launcher on `PATH` and manages PiProbe's isolated runtime environment. Users do not need to activate or maintain a project virtual environment. The package requires Python 3.11+ without pinning one exact minor version, and never replaces the macOS/OS-provided Python.
 
