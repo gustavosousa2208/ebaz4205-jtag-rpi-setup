@@ -17,6 +17,7 @@ from pathlib import Path
 
 
 SERVICE_TYPE = "_piprobe._tcp.local."
+SERVICE_PREFIX = "PiProbe-"
 DEFAULT_TIMEOUT = 2.5
 MAX_TIMEOUT = 120.0
 DEFAULT_QUIET_PERIOD = 0.6
@@ -361,6 +362,16 @@ def apply_aliases(candidates: list[dict[str, object]], aliases: dict[str, str]) 
             row["alias"] = alias
         named.append(row)
     return named
+
+
+def short_names(row: dict[str, object]) -> set[str]:
+    """The label part of an advertised name, so 'banana-pi' finds 'PiProbe-banana-pi'."""
+    names: set[str] = set()
+    for value in (row.get("name"), row.get("alias")):
+        text = str(value or "").strip()
+        if text.casefold().startswith(SERVICE_PREFIX.casefold()):
+            names.add(text[len(SERVICE_PREFIX):].casefold())
+    return {name for name in names if name}
 
 
 def display_name(row: dict[str, object]) -> str:

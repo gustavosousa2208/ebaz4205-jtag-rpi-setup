@@ -246,6 +246,15 @@ class NodeResolutionTests(unittest.TestCase):
                 with self.assertRaises(openocd.UsageError):
                     self.resolve([self.row("PiProbe-5ef16103", "192.168.0.101")])
 
+    def test_a_label_alone_finds_the_advertised_name(self) -> None:
+        row = {"name": "PiProbe-banana-pi", "host": "gusta-bpi.local.", "port": 22, "transport": "ssh",
+               "capabilities": ["jtag"], "addresses": ["192.168.0.101"], "source": "mdns", "node_id": "5ef16103"}
+        for request in ("banana-pi", "PiProbe-banana-pi", "BANANA-PI", "192.168.0.101", "gusta-bpi"):
+            self.assertEqual(self.resolve([row], request).name, "PiProbe-banana-pi", request)
+        # a node whose advertised name carries no prefix is still reachable by that name
+        plain = dict(row, name="gusta-bpi", node_id="")
+        self.assertEqual(self.resolve([plain], "gusta-bpi").name, "gusta-bpi")
+
     def test_unknown_request_lists_what_was_found(self) -> None:
         with self.assertRaises(openocd.UsageError) as caught:
             self.resolve([self.row("PiProbe-5ef16103", "192.168.0.101")], "nope")

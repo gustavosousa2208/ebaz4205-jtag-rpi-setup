@@ -214,6 +214,7 @@ def resolve_node(requested: str | None, ssh_user: str | None, timeout: float) ->
                  str(row.get("alias", "")).casefold()}
         names |= {str(known).casefold() for known in (row.get("known_names") or [])}
         names |= discover.host_names(row)
+        names |= discover.short_names(row)
         names |= {str(address).casefold() for address in (row.get("addresses") or [])}
         return {name for name in names if name}
 
@@ -467,7 +468,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                     "Without -f it performs the read-only Zynq-7000 TAP scan of the EBAZ4205 and verifies "
                     "both IDCODEs; with -f it runs the given host OpenOCD scripts after the transport "
                     "configuration, so target scripts stay on the host.")
-    parser.add_argument("--node", help="PiProbe node name, node id, host, or address (default: the only usable node)")
+    parser.add_argument("--node", help="node to use: its label (banana-pi), advertised name (PiProbe-banana-pi), "
+                                       "node id, host, or address (default: the only usable node)")
     parser.add_argument("--user", help="SSH user on the probe (default: the local user)")
     parser.add_argument("--server-path", default=DEFAULT_SERVER_PATH,
                         help=f"probe-side server binary (default: {DEFAULT_SERVER_PATH})")
