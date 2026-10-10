@@ -280,6 +280,51 @@ class NodeResolutionTests(unittest.TestCase):
         self.assertTrue(dead.finished_early(), "a dead forward must surface as an interruption")
         dead._proc = None
 
+    def test_candidates_put_the_advertised_name_first_then_each_address(self) -> None:
+        row = {"name": "PiProbe-banana-pi", "host": "gusta-bpi.local.", "port": 22, "transport": "ssh",
+               "capabilities": ["jtag"], "addresses": ["192.0.2.9", "192.168.0.101"],
+               "source": "mdns", "node_id": "5ef16103"}
+        with patch.object(openocd.discover, "discover_mdns", return_value=[row]), \
+             patch.object(openocd.discover, "load_peer_candidates", return_value=[]), \
+             patch.object(openocd.discover, "load_aliases", return_value={}):
+            node = openocd.resolve_node(None, None, 0.1)
+        self.assertEqual(node.candidates, ["gusta-bpi.local", "192.0.2.9", "192.168.0.101"])
+        self.assertEqual(node.host, "192.0.2.9")                # reported endpoint until a dial wins
+        self.assertEqual(node.alternatives, ["gusta-bpi.local", "192.168.0.101"])
+
+    def test_choose_identity_skips_a_dead_candidate(self) -> None:
+        node = openocd.Node(name="n", host="dead.local", port=22, source="mdns",
+                            candidates=["dead.local", "192.0.2.9", "192.168.0.101"])
+        calls: list[str] = []
+
+        def fake(argv, **kwargs):
+            host = argv[-2]
+            calls.append(host)
+            return subprocess.CompletedProcess(argv, 0 if host == "192.168.0.101" else 255,
+                                               "", "ssh: connect to host %s port 22: Connection timed out" % host)
+
+        with patch.object(openocd.subprocess, "run", side_effect=fake):
+            self.assertEqual(openocd.choose_identity(node, None, verbose=False), "192.168.0.101")
+        self.assertEqual(calls, ["dead.local", "192.0.2.9", "192.168.0.101"])
+
+    def test_choose_identity_reports_every_attempt_when_none_answer(self) -> None:
+        node = openocd.Node(name="ghost", host="192.0.2.1", port=22, source="peer-config",
+                            candidates=["192.0.2.1"])
+        with patch.object(openocd.subprocess, "run",
+                          side_effect=lambda argv, **kw: subprocess.CompletedProcess(argv, 255, "", "refused")):
+            with self.assertRaises(openocd.TransportError) as caught:
+                openocd.choose_identity(node, None, verbose=False)
+        self.assertIn("192.0.2.1", str(caught.exception))
+        self.assertIn("refused", str(caught.exception))
+
+    def test_a_single_candidate_is_still_verified(self) -> None:
+        node = openocd.Node(name="by-ip", host="192.168.0.101", port=22, source="peer-config",
+                            candidates=["192.168.0.101"])
+        with patch.object(openocd.subprocess, "run",
+                          side_effect=lambda argv, **kw: subprocess.CompletedProcess(argv, 0, "", "")) as run:
+            self.assertEqual(openocd.choose_identity(node, "gusta", verbose=False), "192.168.0.101")
+        self.assertEqual(run.call_args.args[0][-2:], ["gusta@192.168.0.101", "true"])
+
     def test_unknown_request_lists_what_was_found(self) -> None:
         with self.assertRaises(openocd.UsageError) as caught:
             self.resolve([self.row("PiProbe-5ef16103", "192.168.0.101")], "nope")

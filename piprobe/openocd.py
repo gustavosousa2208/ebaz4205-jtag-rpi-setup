@@ -32,6 +32,7 @@ DEFAULT_REMOTE_PORT = 4444            # OpenOCD's remote_bitbang default
 SERVICE_READY_TIMEOUT = 20.0
 TUNNEL_READY_TIMEOUT = 15.0
 STOP_TIMEOUT = 10.0
+CANDIDATE_CONNECT_TIMEOUT = 5
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -39,6 +40,8 @@ EXIT_TRANSPORT = 3
 EXIT_VERIFY = 4
 
 TAP_FOUND_RE = re.compile(r"JTAG tap: (\S+) tap/device found: 0x([0-9a-fA-F]{8})")
+# A host name or address worth dialling: starts and ends with a letter or digit, IPv6 colons allowed.
+CANDIDATE_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._:-]*[A-Za-z0-9])?$")
 
 
 class UsageError(Exception):
@@ -81,10 +84,15 @@ class Node:
     port: int
     source: str
     node_id: str = ""
+    candidates: list[str] = field(default_factory=list)   # identities to try, in order
 
     @property
     def endpoint(self) -> str:
         return f"{self.host}:{self.port}" if self.port and self.port != 22 else self.host
+
+    @property
+    def alternatives(self) -> list[str]:
+        return [candidate for candidate in self.candidates if candidate != self.host]
 
 
 @dataclass
@@ -105,7 +113,8 @@ class Result:
     def to_json(self) -> str:
         return json.dumps({
             "node": {"name": self.node.name, "host": self.node.host, "port": self.node.port,
-                     "source": self.node.source, "node_id": self.node.node_id} if self.node else None,
+                     "source": self.node.source, "node_id": self.node.node_id,
+                     "candidates": self.node.candidates} if self.node else None,
             "transport": self.transport,
             "idcodes": {name: f"0x{value:08x}" for name, value in sorted(self.idcodes.items())},
             "expected": {tap.name: (f"0x{tap.expected:08x}" + (" (version-insensitive)" if tap.mask_version else ""))
@@ -182,13 +191,16 @@ class SessionLock:
             self._handle = None
 
 
-def ssh_base(ssh_port: int | None) -> list[str]:
+def ssh_base(ssh_port: int | None, connect_timeout: int = 10) -> list[str]:
     """SSH options for unattended use: no prompts, and the saved host key must match.
 
     BatchMode turns an unknown host key into a hard failure, which is what fail-closed means here.
+    A shorter connect timeout is used while trying candidates, so a dead identity cannot stall the
+    whole session.
     """
     args = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-            "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"]
+            "-o", f"ConnectTimeout={connect_timeout}", "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3"]
     if ssh_port and ssh_port != 22:
         args += ["-p", str(ssh_port)]
     return args
@@ -224,14 +236,26 @@ def resolve_node(requested: str | None, ssh_user: str | None, timeout: float,
         return "jtag" in caps or row.get("source") == "peer-config" or "peer-config" in (row.get("sources") or [])
 
     def build(row: dict[str, object]) -> Node:
-        addresses = [str(a) for a in (row.get("addresses") or [])]
-        host = addresses[0] if addresses else str(row.get("host") or "").rstrip(".")
-        port = int(row.get("port") or 22)
-        if not host:
+        addresses = [str(address).strip() for address in (row.get("addresses") or []) if str(address).strip()]
+        advertised = str(row.get("host") or "").strip().rstrip(".")
+        # Dial every identity the record offers: the advertised name first, because that is what an
+        # operator's known_hosts usually holds, then each address in the order the record gave them.
+        # A name that does not resolve fails immediately, so putting it first costs nothing. Junk that
+        # a broken or hostile record carries is dropped here, and a record with nothing usable left is
+        # rejected rather than dialled.
+        candidates: list[str] = []
+        for candidate in [advertised, *addresses]:
+            if not CANDIDATE_RE.fullmatch(candidate):
+                continue
+            if candidate.casefold() not in {seen.casefold() for seen in candidates}:
+                candidates.append(candidate)
+        if not candidates:
             raise UsageError(f"candidate {row.get('name')!r} advertises no usable address")
         paths = row.get("sources") or [row.get("source") or "unknown"]
-        return Node(name=discover.display_name(row), host=host, port=port,
-                    source=",".join(str(path) for path in paths), node_id=str(row.get("node_id") or ""))
+        return Node(name=discover.display_name(row), host=addresses[0] if addresses else candidates[0],
+                    port=int(row.get("port") or 22),
+                    source=",".join(str(path) for path in paths), node_id=str(row.get("node_id") or ""),
+                    candidates=candidates)
 
     if requested:
         wanted = requested.casefold()
@@ -277,6 +301,36 @@ def tunnel_argv(node: Node, user: str | None, local_port: int, remote_port: int)
     destination = f"{user}@{node.host}" if user else node.host
     return [*ssh_base(node.port), "-o", "ExitOnForwardFailure=yes", "-N",
             "-L", f"{local_port}:127.0.0.1:{remote_port}", destination]
+
+
+def choose_identity(node: Node, user: str | None, verbose: bool) -> str:
+    """Return the first identity of a node that completes a strict, bounded SSH handshake.
+
+    Trying several identities never relaxes trust: every attempt is verified against known_hosts, so a
+    man in the middle cannot pass any of them; the retry only changes which name is looked up. This is
+    what keeps a healthy probe reachable when a record lists a dead address first, and it lets a host
+    that trusts the probe by name work without an entry for every advertised address.
+    """
+    failures: list[str] = []
+    for candidate in node.candidates or [node.host]:
+        argv = [*ssh_base(node.port, connect_timeout=CANDIDATE_CONNECT_TIMEOUT),
+                f"{user}@{candidate}" if user else candidate, "true"]
+        if verbose:
+            print("+ " + " ".join(shlex.quote(arg) for arg in argv), file=sys.stderr)
+        try:
+            done = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  timeout=CANDIDATE_CONNECT_TIMEOUT + 5)
+        except subprocess.TimeoutExpired:
+            failures.append(f"{candidate}: no answer within {CANDIDATE_CONNECT_TIMEOUT}s")
+            continue
+        except OSError as exc:
+            failures.append(f"{candidate}: {exc}")
+            continue
+        if done.returncode == 0:
+            return candidate
+        reason = [line for line in (done.stderr or done.stdout or "").strip().splitlines() if line.strip()]
+        failures.append(f"{candidate}: {reason[-1][:90] if reason else 'refused'}")
+    raise TransportError("no identity of " + node.name + " answered (" + "; ".join(failures) + ")")
 
 
 class RemoteService:
@@ -544,6 +598,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"node: {result.node.name} ({result.node.endpoint}, from {result.node.source})")
             print(f"plan: {result.transport}")
             print(f"lock: {lock_path}")
+            if len(result.node.candidates) > 1:
+                print("dial order: " + " -> ".join(result.node.candidates))
             for command in commands:
                 print(f"  -c {command}")
             for script in args.scripts:
@@ -565,6 +621,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     service = RemoteService(result.node, args.user, args.server_path, args.rbb_port, args.verbose)
     tunnel = Tunnel(result.node, args.user, local_port, args.rbb_port, args.verbose)
     try:
+        result.node.host = choose_identity(result.node, args.user, args.verbose)
+        if len(result.node.candidates) > 1:
+            result.transport += f" via {result.node.host}"
         service.start()
         tunnel.start()
         exit_code, output = run_openocd(openocd, commands, list(args.scripts), args.verbose)
