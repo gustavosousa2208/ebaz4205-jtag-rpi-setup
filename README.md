@@ -27,6 +27,60 @@ Markdown task list or import `.beads/issues.jsonl` during normal work.
 Use approximately 15 cm direct jumpers and one common ground. Do not connect
 power between the boards.
 
+### Second port: SWD for an MCU
+
+A second target can hang off the same Banana Pi while the EBAZ stays wired: PC0-PC3 keep the Zynq
+chain, and four Port A pins on the same PIO block carry SWD to an STM32-class MCU. Checked on the
+running board on 2026-10-10: no device-tree pinctrl state references any of these lines, and a
+`gpioget` request on each succeeds, so nothing on the board owns them.
+
+| Banana Pi header | H2+ pin | gpiochip0 line | SWD signal | Notes |
+|---:|:---:|---:|:---:|---|
+| 31 | PA8 | 8 | SWCLK | the clock; JTAG calls it TCK |
+| 33 | PA9 | 9 | SWDIO | the data line; JTAG calls it TMS, and it is **bidirectional** |
+| 7 | PA6 | 6 | reserved | spare, the obvious place for NRST later |
+| 29 | PA7 | 7 | reserved | an input from the target, so the natural pin for SWO trace later |
+| GND (6, 9, 14, 25, 30, 34, 39; pin 20 is shared with the EBAZ) | – | – | GND | one common ground |
+
+A minimum SWD link is SWCLK, SWDIO and ground. The MCU is powered separately; its VDD must be 3.3 V
+(the H2+ pins are not 5 V tolerant) and the power rails must never be bridged.
+
+JTAG to SWD, and the difference that matters:
+
+| JTAG (EBAZ, PC0-PC3) | SWD (MCU, PA8-PA9) | Difference |
+|---|---|---|
+| TCK | SWCLK | same role: the clock |
+| TMS | SWDIO | JTAG drives TMS as an output; SWD turns SWDIO around to read the target, so the line is switched between output and input |
+| TDI | – | unused by SWD, reserved here for NRST |
+| TDO | – | unused by SWD; being an input, it is the natural capture pin for SWO trace |
+
+OpenOCD's `linuxgpiod` driver handles SWD on one SWDIO pin by re-requesting that line as input or
+output as needed (`gpiod_line_settings_set_direction`), so no direction pin is wired here; its
+optional `swdio_dir` is for boards with an external direction buffer.
+
+The repository's MMIO runner contains that driver, but its MMIO acceleration is hard-coded to Port C
+— the EBAZ pins — and engages whenever the binary is named `openocd-ebaz-mmio`, whatever pins the
+adapter file configures. Run with the SWD adapter, it would drive PC0-PC3 instead of PA8/PA9 and the
+traffic would never reach the MCU (reproduced on 2026-10-10; gating it on the configured pins is Bead
+`ebaz4205-3pb.15`). The plain libgpiod path needs neither root nor `/dev/mem`, so use a copy whose
+name does not carry that marker:
+
+```sh
+cp /usr/local/libexec/openocd-ebaz-mmio ~/openocd-plain    # MMIO stays off for this copy
+~/openocd-plain -f ~/ebaz4205-jtag/jtag/adapters/bananapi-m2-zero-swd.cfg -f /path/to/target.cfg
+```
+
+That runs as your normal user through `plugdev`, logs `Linux GPIOD JTAG/SWD bitbang driver` and no
+MMIO line, and touches only the Port A pins. Keep the installed runner (with sudo) for the EBAZ, where
+the acceleration is what makes a 2 MB upload finish in about 19 s; the distro `/usr/bin/openocd` on
+the probe has no `linuxgpiod`, so it cannot serve either port.
+
+Not yet available over the network: the PiProbe server speaks XVC and remote_bitbang for JTAG only
+and refuses reset asserts, so SWD needs the driver's four SWD commands implemented in the server
+(`'d'` SWD write, `'O'`/`'o'` SWDIO direction, `'c'` SWDIO read) plus the same runtime direction
+switch on the SWDIO pin, and a way for a session to select the SWD transport and the second pin set.
+Tracked as Bead `ebaz4205-s85`.
+
 Production settings:
 
 - Adapter: `bananapi-m2-zero-mmio`
