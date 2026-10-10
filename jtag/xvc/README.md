@@ -122,7 +122,7 @@ path. Re-check any installation with:
 
 ```sh
 timeout 2 /usr/local/libexec/ebaz-xvc-server --fake --port 2549 --bind 127.0.0.1
-echo "exit $?  # 2 = rejected; 124 = the server ran and accepted --bind"
+echo "exit $?  # 2 = rejected (safe); 3 = another server holds the pins, re-run when idle; 124 = the server ran and accepted --bind"
 ```
 
 The check uses `--fake` (no pins, no `/dev/mem`) and a loopback address, so it

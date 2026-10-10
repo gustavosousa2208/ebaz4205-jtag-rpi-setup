@@ -466,9 +466,11 @@ int main(int argc, char **argv)
 	sigaction(SIGHUP, &sa, NULL);
 	signal(SIGPIPE, SIG_IGN);
 
-	/* Before the pins are muxed: a second server, whatever protocol it speaks, must never drive them. */
+	/* Before the pins are muxed: a second server, whatever protocol it speaks, must never drive them.
+	 * The lock refusal exits 3, deliberately not the 2 used for a rejected argument, so
+	 * install-xvc.sh's bind-rejection gate cannot mistake "pins busy" for "bind address refused". */
 	if (acquire_pin_lock() != 0)
-		return 2;
+		return 3;
 	if (!fake && setup_pins() != 0) {
 		release_pin_lock();
 		return 2;

@@ -44,16 +44,23 @@ install -o root -g root -m 0440 "$candidate" "$sudoers"
 visudo -cf "$sudoers"
 
 # Negative access test: the installed server must reject any bind address.
-# XVC has no authentication, so a binary that honours --bind can expose JTAG
-# control to every host on the LAN. --fake touches no pins or hardware, and the
-# address below is loopback, so this check never opens a network port itself.
+# Raw XVC has no authentication and remote_bitbang adds none, so a binary that honours --bind can
+# expose JTAG control to every host on the LAN. --fake touches no pins or hardware, and the address
+# below is loopback, so this check never opens a network port itself. Exit 2 is the
+# argument-rejection code; a server that cannot take the pin lock exits 3 instead, so a busy probe
+# cannot pass this gate.
 set +e
 timeout 2 "$installed" --fake --port 2549 --bind 127.0.0.1 >/dev/null 2>&1
 bind_rc=$?
 set -e
+if [ "$bind_rc" -eq 3 ]; then
+    echo "Cannot verify: $installed could not take the pin lock, so another server is running." >&2
+    echo "Stop it and run this installer again." >&2
+    exit 3
+fi
 if [ "$bind_rc" -ne 2 ]; then
     echo "REFUSING to install: $installed did not reject --bind (exit $bind_rc, expected 2)." >&2
-    echo "That binary can serve unauthenticated XVC on a LAN address; rebuild from the current xvc-server.c." >&2
+    echo "That binary can serve unauthenticated JTAG on a LAN address; rebuild from the current xvc-server.c." >&2
     exit 3
 fi
 
