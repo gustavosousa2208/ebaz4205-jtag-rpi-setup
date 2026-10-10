@@ -29,6 +29,7 @@ from piprobe import discover
 
 DEFAULT_SERVER_PATH = "/usr/local/libexec/ebaz-xvc-server"
 DEFAULT_REMOTE_PORT = 4444            # OpenOCD's remote_bitbang default
+GPIO_MAX_LINE = 223                   # gpiochip0 carries PA..PG on this SoC; both ends check this bound
 SERVICE_READY_TIMEOUT = 20.0
 TUNNEL_READY_TIMEOUT = 15.0
 STOP_TIMEOUT = 10.0
@@ -105,6 +106,7 @@ class Result:
     cleanup: str = "not checked"
     error: str | None = None
     output: str = ""
+    service_log: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -279,20 +281,26 @@ def resolve_node(requested: str | None, ssh_user: str | None, timeout: float,
     return build(usable_rows[0])
 
 
-def service_argv(node: Node, user: str | None, server_path: str, port: int) -> list[str]:
+def service_argv(node: Node, user: str | None, server_path: str, port: int,
+                 mode_args: Sequence[str] = ()) -> list[str]:
     """SSH command that runs the probe-side service for one session.
 
     The remote shell kills the sudo child when its stdin closes, which happens when this side stops
     the ssh process: sudo relays the signal and the server prints 'stopped, pins restored'. The whole
     remote command travels as one quoted argument, because ssh joins trailing arguments with spaces
-    without escaping them. Path and port go in as positional parameters so shell quoting cannot
-    break them.
+    without escaping them. Server arguments go in as positional parameters, so shell quoting cannot
+    break them; --swd CLK,DIO and --nrst LINE are ordinary argv pairs after that.
+
+    The remote command uses sudo -n, so it needs a passwordless rule for the server path. Without one
+    the probe side fails with 'sudo: a password is required' and nothing is driven.
     """
-    script = ('sudo -n "$1" --protocol remote-bitbang --port "$2" & child=$!; '
+    script = ('probe="$1"; port="$2"; shift 2; '
+              "sudo -n \"$probe\" --protocol remote-bitbang --port \"$port\" \"$@\" & child=$!; "
               "trap 'kill \"$child\" 2>/dev/null' EXIT HUP INT TERM; "
               "cat >/dev/null")
     remote = " ".join([shlex.quote("sh"), "-c", shlex.quote(script),
-                       shlex.quote("piprobe"), shlex.quote(server_path), shlex.quote(str(port))])
+                       shlex.quote("piprobe"), shlex.quote(server_path), shlex.quote(str(port)),
+                       *(shlex.quote(arg) for arg in mode_args)])
     destination = f"{user}@{node.host}" if user else node.host
     return [*ssh_base(node.port), destination, remote]
 
@@ -340,15 +348,17 @@ class RemoteService:
     the ssh process: sudo relays the signal, and the server prints 'stopped, pins restored'.
     """
 
-    def __init__(self, node: Node, user: str | None, server_path: str, port: int, verbose: bool) -> None:
-        self.node, self.user, self.server_path, self.port, self.verbose = node, user, server_path, port, verbose
+    def __init__(self, node: Node, user: str | None, server_path: str, port: int, verbose: bool,
+                 mode_args: Sequence[str] = ()) -> None:
+        (self.node, self.user, self.server_path, self.port, self.verbose, self.mode_args) = (
+            node, user, server_path, port, verbose, list(mode_args))
         self.lines: list[str] = []
         self._proc: subprocess.Popen[str] | None = None
         self._lines: queue.Queue[str] = queue.Queue()
 
     def start(self) -> None:
         assert self._proc is None, "service already started"
-        argv = service_argv(self.node, self.user, self.server_path, self.port)
+        argv = service_argv(self.node, self.user, self.server_path, self.port, self.mode_args)
         if self.verbose:
             print("+ " + " ".join(shlex.quote(a) for a in argv), file=sys.stderr)
         self._proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -363,7 +373,6 @@ class RemoteService:
                     raise TransportError("the probe-side service exited before it listened: "
                                          + self._tail())
                 continue
-            self.lines.append(line)
             if f"listening on 127.0.0.1:{self.port}" in line:
                 return
         raise TransportError(f"the probe-side service did not listen within {SERVICE_READY_TIMEOUT:.0f}s: "
@@ -372,7 +381,9 @@ class RemoteService:
     def _pump(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
         for line in self._proc.stdout:
-            self._lines.put(line.rstrip("\n"))
+            text = line.rstrip("\n")
+            self.lines.append(text)            # the whole session keeps a readable log, not just startup
+            self._lines.put(text)
         self._lines.put("")
 
     def _tail(self, limit: int = 6) -> str:
@@ -465,6 +476,16 @@ def scan_commands() -> list[str]:
     return [*commands, "init", "scan_chain", "shutdown"]
 
 
+def parse_swd(spec: str) -> tuple[str, str]:
+    """Validate the CLK,DIO pair before it travels to the probe as server arguments."""
+    parts = spec.split(",")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise UsageError("--swd takes two gpiochip0 line numbers, CLK,DIO (for example 8,9)")
+    if any(int(part) > GPIO_MAX_LINE for part in parts):
+        raise UsageError(f"--swd lines must be 0..{GPIO_MAX_LINE}")
+    return parts[0], parts[1]
+
+
 def find_openocd(explicit: str | None) -> str:
     if explicit:
         resolved = shutil.which(explicit) or (explicit if Path(explicit).exists() else None)
@@ -489,12 +510,21 @@ def run_child(argv: list[str], timeout: float | None = None) -> subprocess.Compl
                           stdin=subprocess.DEVNULL, timeout=timeout)
 
 
-def run_openocd(binary: str, commands: list[str], scripts: list[str], verbose: bool) -> tuple[int, str]:
+def run_openocd(binary: str, commands: list[str], scripts: list[str], verbose: bool,
+                post_commands: Sequence[str] = ()) -> tuple[int, str]:
+    """Build the OpenOCD command line: transport first, then scripts, then the caller's commands.
+
+    The order carries meaning: 'adapter driver' has to precede a target script's 'transport select',
+    and a caller's 'init' has to follow the target script that defines the taps, or OpenOCD has
+    nothing to initialize.
+    """
     argv = [binary]
     for command in commands:
         argv += ["-c", command]
     for script in scripts:
         argv += ["-f", script]
+    for command in post_commands:
+        argv += ["-c", command]
     if verbose:
         print("+ " + " ".join(shlex.quote(a) for a in argv), file=sys.stderr)
     completed = run_child(argv)
@@ -567,6 +597,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("-f", "--file", action="append", default=[], dest="scripts",
                         help="host OpenOCD script to run after the transport configuration (repeatable); "
                              "with -f the built-in TAP scan is not used")
+    parser.add_argument("--swd", metavar="CLK,DIO",
+                        help="ask the probe-side service for SWD instead of JTAG, on two gpiochip0 lines "
+                             "(for example 8,9 = PA8 SWCLK, PA9 SWDIO); needs -f, because the target "
+                             "script is what selects the swd transport")
+    parser.add_argument("--nrst", metavar="LINE", type=int,
+                        help="let the probe drive the target's reset line (gpiochip0 line; the wire needs "
+                             "a series resistor). Without it every reset request is refused")
+    parser.add_argument("-c", "--command", action="append", default=[], dest="commands",
+                        help="OpenOCD command to run after the scripts (repeatable), for example "
+                             "-c 'init; halt; reg pc; resume; shutdown'")
     parser.add_argument("--peers-file", type=Path, default=discover.default_peers_path(),
                         help="pinned-peer file to read (default: the native PiProbe config path)")
     parser.add_argument("--aliases-file", type=Path, default=discover.default_aliases_path(),
@@ -597,12 +637,17 @@ def report(result: Result, verbose: bool) -> None:
         print(f"error: {result.error}")
     if verbose and result.output:
         print(result.output)
+    if verbose and result.service_log:
+        print("probe-side service:")
+        for line in result.service_log:
+            print(f"  {line}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     result = Result()
     lock_path = discover.default_peers_path().parent / "openocd.lock"
+    service_args: list[str] = []
 
     try:
         if not 1 <= args.rbb_port <= 65535:
@@ -610,6 +655,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         local_port = args.local_port or args.rbb_port
         if not 1 <= local_port <= 65535:
             raise UsageError("--local-port must be 1..65535")
+        if args.swd and not args.scripts:
+            raise UsageError("--swd needs -f: the target script is what selects the swd transport, and "
+                             "the built-in scan is the EBAZ4205 JTAG chain")
+        swd_lines = parse_swd(args.swd) if args.swd else None
+        if args.nrst is not None and not 0 <= args.nrst <= GPIO_MAX_LINE:
+            raise UsageError(f"--nrst must be a gpiochip0 line number (0..{GPIO_MAX_LINE})")
+        if swd_lines:
+            service_args += ["--swd", ",".join(swd_lines)]
+        if args.nrst is not None:
+            service_args += ["--nrst", str(args.nrst)]
         openocd = find_openocd(args.opencd)
         result.node = resolve_node(args.node, args.user, args.discovery_timeout or 2.5,
                                    peers_path=args.peers_file.expanduser(),
@@ -617,6 +672,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         commands = transport_commands(local_port) + ([] if args.scripts else scan_commands())
         result.transport = (f"remote_bitbang over SSH (127.0.0.1:{local_port} -> "
                             f"probe 127.0.0.1:{args.rbb_port}), openocd {openocd}")
+        if swd_lines:
+            result.transport += f", SWD on lines {swd_lines[0]},{swd_lines[1]}"
+        if args.nrst is not None:
+            result.transport += f", NRST line {args.nrst}"
         if args.dry_run:
             print(f"node: {result.node.name} ({result.node.endpoint}, from {result.node.source})")
             print(f"plan: {result.transport}")
@@ -627,6 +686,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(f"  -c {command}")
             for script in args.scripts:
                 print(f"  -f {script}")
+            for command in args.commands:
+                print(f"  -c {command}")
             return EXIT_OK
     except UsageError as exc:
         print(f"piprobe openocd: {exc}", file=sys.stderr)
@@ -641,7 +702,8 @@ def main(argv: Sequence[str] | None = None) -> int:
               "refusing to drive the probe", file=sys.stderr)
         return EXIT_TRANSPORT
 
-    service = RemoteService(result.node, args.user, args.server_path, args.rbb_port, args.verbose)
+    service = RemoteService(result.node, args.user, args.server_path, args.rbb_port, args.verbose,
+                            mode_args=service_args)
     tunnel = Tunnel(result.node, args.user, local_port, args.rbb_port, args.verbose)
     try:
         result.node.host = choose_identity(result.node, args.user, args.verbose)
@@ -649,7 +711,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result.transport += f" via {result.node.host}"
         service.start()
         tunnel.start()
-        exit_code, output = run_openocd(openocd, commands, list(args.scripts), args.verbose)
+        exit_code, output = run_openocd(openocd, commands, list(args.scripts), args.verbose,
+                                        post_commands=args.commands)
         result.openocd_exit = exit_code
         result.output = output
         if tunnel.finished_early():
@@ -659,6 +722,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.scripts:
             if exit_code != 0:
                 result.problems.append(f"openocd exited with {exit_code}")
+                tail = service._tail()
+                if tail:
+                    result.problems.append("probe-side service said: " + tail)
         else:
             result.idcodes, result.problems = verify_idcodes(output)
         if trouble:
@@ -668,6 +734,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         tunnel.stop()
         service.stop()
+        result.service_log = list(service.lines)
         lock.release()
         result.cleanup = check_cleanup(result.node, args.user, args.rbb_port, args.verbose)
 

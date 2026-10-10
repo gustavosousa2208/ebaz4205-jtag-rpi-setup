@@ -98,12 +98,23 @@ class CommandTests(unittest.TestCase):
         words = shlex.split(argv[-1])
         self.assertEqual(words[:2], ["sh", "-c"])
         script = words[2]
-        self.assertIn('sudo -n "$1"', script)
+        self.assertIn('probe="$1"', script)
+        self.assertIn('port="$2"', script)
         self.assertIn("--protocol remote-bitbang", script)
-        self.assertIn('--port "$2"', script)
+        self.assertIn('--port "$port"', script)
         self.assertIn("trap", script)          # the child is killed when this side closes stdin
         self.assertIn("cat >/dev/null", script)
         self.assertEqual(words[3:], ["piprobe", "/usr/local/libexec/ebaz-xvc-server", "4444"])
+
+    def test_service_command_passes_the_mode_arguments_as_separate_words(self) -> None:
+        # the server parses its own argv, so --swd and its value must stay two arguments
+        argv = openocd.service_argv(NODE, "gusta", "/usr/local/libexec/ebaz-xvc-server", 4444,
+                                    ["--swd", "8,9", "--nrst", "6"])
+        words = shlex.split(argv[-1])
+        self.assertEqual(words[3:], ["piprobe", "/usr/local/libexec/ebaz-xvc-server", "4444",
+                                     "--swd", "8,9", "--nrst", "6"])
+        # the positional parameters are shifted out of the way, so "$@" is exactly the mode arguments
+        self.assertIn('shift 2', words[2])
 
     def test_service_command_keeps_a_path_with_spaces_intact(self) -> None:
         awkward = "/home/gusta/odd path/ebaz-xvc-server"
@@ -124,6 +135,24 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(openocd.service_argv(node, None, "/srv/server", 4444)[
             openocd.service_argv(node, None, "/srv/server", 4444).index("-p") + 1], "2222")
         self.assertIn("2222", openocd.tunnel_argv(node, None, 4444, 4444))
+
+    def test_openocd_argv_orders_transport_then_scripts_then_caller_commands(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake_child(argv: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+            captured.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        with patch.object(openocd, "run_child", side_effect=fake_child):
+            exit_code, _ = openocd.run_openocd(
+                "openocd", ["adapter driver remote_bitbang"], ["board.cfg"], False,
+                post_commands=["init", "halt", "shutdown"])
+        self.assertEqual(exit_code, 0)
+        argv = captured[0]
+        self.assertEqual(argv[0], "openocd")
+        self.assertEqual(argv[1:3], ["-c", "adapter driver remote_bitbang"])
+        self.assertEqual(argv[3:5], ["-f", "board.cfg"])
+        self.assertEqual(argv[5:], ["-c", "init", "-c", "halt", "-c", "shutdown"])
 
 
 class LockTests(unittest.TestCase):
@@ -381,12 +410,21 @@ class MainTests(unittest.TestCase):
         self.assertEqual(openocd.main(["--rbb-port", "70000"]), openocd.EXIT_USAGE)
         self.assertEqual(openocd.main(["--local-port", "0"]), openocd.EXIT_USAGE)
 
+    def test_swd_is_refused_before_any_session_when_it_cannot_work(self) -> None:
+        # the built-in scan interrogates the EBAZ4205 JTAG chain, which an SWD port cannot answer
+        self.assertEqual(openocd.main(["--swd", "8,9"]), openocd.EXIT_USAGE)
+        self.assertEqual(openocd.main(["--swd", "8", "-f", "board.cfg"]), openocd.EXIT_USAGE)
+        self.assertEqual(openocd.main(["--swd", "8,999", "-f", "board.cfg"]), openocd.EXIT_USAGE)
+        self.assertEqual(openocd.main(["--swd", "eight,9", "-f", "board.cfg"]), openocd.EXIT_USAGE)
+        self.assertEqual(openocd.main(["--nrst", "999", "-f", "board.cfg"]), openocd.EXIT_USAGE)
+
     def test_script_mode_keeps_the_transport_but_not_the_builtin_scan(self) -> None:
         rows = [{"name": "PiProbe-5ef16103", "host": "gusta-bpi.local.", "port": 22, "addresses": ["192.168.0.101"],
                  "capabilities": ["jtag"], "source": "mdns", "node_id": "5ef16103-aaaa"}]
         captured: dict[str, list[str]] = {}
 
-        def fake_run(binary: str, commands: list[str], scripts: list[str], verbose: bool) -> tuple[int, str]:
+        def fake_run(binary: str, commands: list[str], scripts: list[str], verbose: bool,
+                     post_commands: tuple[str, ...] = ()) -> tuple[int, str]:
             captured["commands"], captured["scripts"] = commands, scripts
             return 0, ""
 
@@ -405,6 +443,46 @@ class MainTests(unittest.TestCase):
         self.assertEqual(captured["scripts"], ["board.cfg"])
         self.assertIn("adapter driver remote_bitbang", captured["commands"])
         self.assertNotIn("scan_chain", " ".join(captured["commands"]))
+
+    def test_swd_session_reaches_the_service_and_the_caller_commands(self) -> None:
+        rows = [{"name": "PiProbe-5ef16103", "host": "gusta-bpi.local.", "port": 22, "addresses": ["192.168.0.101"],
+                 "capabilities": ["jtag", "swd"], "source": "mdns", "node_id": "5ef16103-aaaa"}]
+        seen: dict[str, list[str]] = {}
+
+        class FakeService:
+            def __init__(self, node: object, user: object, server_path: object, port: object,
+                         verbose: object, mode_args: object = ()) -> None:
+                seen["mode_args"] = list(mode_args)  # type: ignore[arg-type]
+                seen["server_path"] = [str(server_path)]
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        def fake_run(binary: str, commands: list[str], scripts: list[str], verbose: bool,
+                     post_commands: tuple[str, ...] = ()) -> tuple[int, str]:
+            seen["commands"], seen["scripts"] = list(commands), list(scripts)
+            seen["post"] = list(post_commands)
+            return 0, ""
+
+        with patch.object(openocd.discover, "discover_mdns", return_value=rows), \
+             patch.object(openocd.discover, "load_peer_candidates", return_value=[]), \
+             patch.object(openocd, "find_openocd", return_value="openocd"), \
+             patch.object(openocd, "RemoteService", FakeService), \
+             patch.object(openocd, "run_openocd", side_effect=fake_run), \
+             patch.object(openocd.Tunnel, "start"), \
+             patch.object(openocd.Tunnel, "stop"), \
+             patch.object(openocd, "check_cleanup", return_value="checked"), \
+             patch.object(openocd.SessionLock, "acquire", return_value=True), \
+             patch.object(openocd.SessionLock, "release"):
+            self.assertEqual(openocd.main(["--swd", "8,9", "--nrst", "6", "-f", "stm32-swd.cfg",
+                                           "-c", "init; halt; reg pc; resume; shutdown"]), openocd.EXIT_OK)
+        self.assertEqual(seen["mode_args"], ["--swd", "8,9", "--nrst", "6"])
+        self.assertEqual(seen["scripts"], ["stm32-swd.cfg"])
+        self.assertEqual(seen["post"], ["init; halt; reg pc; resume; shutdown"])
+        self.assertIn("adapter driver remote_bitbang", seen["commands"])
 
 
 if __name__ == "__main__":

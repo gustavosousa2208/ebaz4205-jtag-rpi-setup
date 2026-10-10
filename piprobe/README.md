@@ -53,6 +53,38 @@ machine. `--json` prints a structured result, `--dry-run` shows the plan without
 touching the probe, and `--opencd` points at a specific OpenOCD binary when none
 is on `PATH`.
 
+For an MCU target, `--swd CLK,DIO` asks the probe-side service for SWD on two
+gpiochip0 lines, and `--nrst LINE` lets it drive the target's reset line (the
+wire needs a series resistor; without the flag every reset request is refused).
+`--swd` needs `-f`, because the target script is what selects the `swd`
+transport — the built-in scan is the EBAZ4205 JTAG chain. `-c COMMAND` runs an
+OpenOCD command after those scripts, which is how a session reads something
+back and exits instead of idling in its gdb server:
+
+```sh
+piprobe openocd --node PiProbe-5ef16103 --swd 8,9 --nrst 6 \
+  -f jtag/openocd-scripts/target/stm32-swd.cfg \
+  -c "init" -c "halt" -c "reg pc" -c "resume" -c "shutdown"
+```
+
+Give every readback its own `-c`. Commands that print a result do so when they
+come from the command line, while the same commands inside a `-f` script run
+without printing (observed with xPack 0.12.0-7 against an STM32H7).
+
+Starting the service needs `sudo -n` on the probe, so the server path needs a
+passwordless rule. Install it once:
+
+```sh
+sudo install -m 0755 -o root -g root /tmp/ebaz-xvc-server /usr/local/libexec/ebaz-xvc-server
+printf '%s\n' 'gusta ALL=(root) NOPASSWD: /usr/local/libexec/ebaz-xvc-server' |
+  sudo tee /etc/sudoers.d/ebaz-jtag >/dev/null
+sudo chmod 0440 /etc/sudoers.d/ebaz-jtag && sudo visudo -cf /etc/sudoers.d/ebaz-jtag
+```
+
+Without that rule the session fails at once with `sudo: a password is required`
+and nothing is driven. Replacing the binary afterwards is a root copy too, which
+is the only step that still needs a human at the keyboard.
+
 The transport is OpenOCD's `remote_bitbang` over the SSH forward: no stock
 Windows OpenOCD build ships the `xvc` adapter driver, while every build has
 `remote_bitbang`. OpenSSH must be able to verify the probe's host key without
