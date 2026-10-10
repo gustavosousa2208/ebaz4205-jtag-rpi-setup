@@ -318,7 +318,7 @@ def choose_identity(node: Node, user: str | None, verbose: bool) -> str:
         if verbose:
             print("+ " + " ".join(shlex.quote(arg) for arg in argv), file=sys.stderr)
         try:
-            done = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            done = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, errors="replace",
                                   timeout=CANDIDATE_CONNECT_TIMEOUT + 5)
         except subprocess.TimeoutExpired:
             failures.append(f"{candidate}: no answer within {CANDIDATE_CONNECT_TIMEOUT}s")
@@ -352,7 +352,7 @@ class RemoteService:
         if self.verbose:
             print("+ " + " ".join(shlex.quote(a) for a in argv), file=sys.stderr)
         self._proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                      stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                      stderr=subprocess.STDOUT, text=True, bufsize=1, errors="replace")
         threading.Thread(target=self._pump, daemon=True).start()
         deadline = time.monotonic() + SERVICE_READY_TIMEOUT
         while time.monotonic() < deadline:
@@ -404,7 +404,7 @@ class Tunnel:
         if self.verbose:
             print("+ " + " ".join(shlex.quote(a) for a in argv), file=sys.stderr)
         self._proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE, text=True)
+                                      stderr=subprocess.PIPE, text=True, errors="replace")
         deadline = time.monotonic() + TUNNEL_READY_TIMEOUT
         while time.monotonic() < deadline:
             if self._proc.poll() is not None:
@@ -479,6 +479,16 @@ def find_openocd(explicit: str | None) -> str:
                      "https://github.com/xpack-dev-tools/openocd-xpack/releases)")
 
 
+def run_child(argv: list[str], timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+    """Run a child process whose output may not be valid UTF-8.
+
+    OpenOCD and ssh print localized text, and on Windows that is not UTF-8; decoding with the default
+    error handling used to raise and hide the failure that mattered.
+    """
+    return subprocess.run(argv, capture_output=True, text=True, errors="replace",
+                          stdin=subprocess.DEVNULL, timeout=timeout)
+
+
 def run_openocd(binary: str, commands: list[str], scripts: list[str], verbose: bool) -> tuple[int, str]:
     argv = [binary]
     for command in commands:
@@ -487,8 +497,21 @@ def run_openocd(binary: str, commands: list[str], scripts: list[str], verbose: b
         argv += ["-f", script]
     if verbose:
         print("+ " + " ".join(shlex.quote(a) for a in argv), file=sys.stderr)
-    completed = subprocess.run(argv, capture_output=True, text=True)
+    completed = run_child(argv)
     return completed.returncode, (completed.stdout or "") + (completed.stderr or "")
+
+
+def bulk_transport_trouble(output: str) -> str | None:
+    """Recognise the socket-buffer failure a bulk payload causes on a bit-level transport.
+
+    remote_bitbang sends a command byte per pin state, so a multi-megabyte payload fills the client's
+    non-blocking socket and OpenOCD reports WSAEWOULDBLOCK (10035) or EAGAIN from remote_bitbang_putc.
+    Saying so, and pointing at the command that moves payloads out of band, beats a raw socket error.
+    """
+    if "remote_bitbang_putc" in output or "WSAGetLastError==10035" in output:
+        return ("the probe's bit-level transport ran out of socket buffer, which is what a bulk payload does "
+                "(a 2 MB bitstream is tens of MB of pin commands); use 'piprobe program' for bitstreams")
+    return None
 
 
 def verify_idcodes(output: str) -> tuple[dict[str, int], list[str]]:
@@ -514,7 +537,7 @@ def check_cleanup(node: Node, user: str | None, port: int, verbose: bool) -> str
     if verbose:
         print("+ " + " ".join(shlex.quote(a) for a in argv), file=sys.stderr)
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=STOP_TIMEOUT + 10)
+        completed = subprocess.run(argv, capture_output=True, text=True, errors="replace", timeout=STOP_TIMEOUT + 10)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return f"not checked ({exc})"
     answer = (completed.stdout or "").strip()
@@ -632,11 +655,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if tunnel.finished_early():
             result.problems.append("the SSH forward died during the session, so the transport was "
                                    "interrupted and this result is not trustworthy")
+        trouble = bulk_transport_trouble(output)
         if args.scripts:
             if exit_code != 0:
                 result.problems.append(f"openocd exited with {exit_code}")
         else:
             result.idcodes, result.problems = verify_idcodes(output)
+        if trouble:
+            result.problems.append(trouble)      # after the mode-specific list, which scan mode replaces
     except TransportError as exc:
         result.error = str(exc)
     finally:

@@ -325,6 +325,24 @@ class NodeResolutionTests(unittest.TestCase):
             self.assertEqual(openocd.choose_identity(node, "gusta", verbose=False), "192.168.0.101")
         self.assertEqual(run.call_args.args[0][-2:], ["gusta@192.168.0.101", "true"])
 
+    def test_child_output_that_is_not_valid_utf8_is_read_instead_of_raising(self) -> None:
+        """OpenOCD prints localized text on Windows, which is not UTF-8; a decode error used to abort
+        the read and hide the failure that mattered."""
+        completed = openocd.run_child([sys.executable, "-c",
+                                       r"import sys; sys.stdout.buffer.write(b'ok \xe7 fail\n')"])
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("ok", completed.stdout)
+        self.assertIn("fail", completed.stdout, "the tail of the line must survive the decode")
+
+    def test_the_socket_buffer_failure_of_a_bulk_payload_is_explained(self) -> None:
+        """A 2 MB bitstream over remote_bitbang fills the client's socket; the tool must say so."""
+        sample = ("Error: Error on socket 'remote_bitbang_putc': WSAGetLastError==10035, message: "
+                  "a non-blocking socket operation could not be completed immediately\nError: failed: -4\n")
+        trouble = openocd.bulk_transport_trouble(sample)
+        self.assertIsNotNone(trouble)
+        self.assertIn("piprobe program", trouble)
+        self.assertIsNone(openocd.bulk_transport_trouble("Info : JTAG tap: zynq.cpu tap/device found: 0x4ba00477\n"))
+
     def test_unknown_request_lists_what_was_found(self) -> None:
         with self.assertRaises(openocd.UsageError) as caught:
             self.resolve([self.row("PiProbe-5ef16103", "192.168.0.101")], "nope")

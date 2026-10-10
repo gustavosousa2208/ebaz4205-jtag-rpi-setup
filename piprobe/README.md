@@ -73,6 +73,28 @@ reports the session as an interrupted transport.
 same options `piprobe discover` takes), which is what makes a session testable
 against a scratch configuration without touching the real one.
 
+## Programming a bitstream
+
+A bitstream cannot travel over the bit-level JTAG transport: every pin state is a command byte, so a
+2 MB bitstream becomes tens of megabytes of commands and the client's socket fills long before the
+payload is through. `piprobe program` keeps the probe feeling like a USB probe by moving the file over
+the authenticated SSH connection this tool already owns — no manual `scp`, no shell on the probe — and
+letting the probe program the device locally at full speed:
+
+```sh
+piprobe program --node banana-pi --file design.bit           # ship, verify, program, report
+piprobe program --node banana-pi --file design.bit --check    # ship and verify only
+```
+
+The copy is verified by digest on arrival, the runner's own verdict is reported (`result=pass`,
+`PCFG_DONE=1`, `exit_status=0`), and the temporary copy is deleted on success and kept for evidence on
+failure. The flow on the probe is the qualified one from `jtag/README.md`; `--adapter`, `--runner-dir`
+and `--remote-dir` describe a different probe layout, and `--json` gives a structured result.
+
+For read and debug work, `piprobe openocd` remains the right tool. If a host-side script does try to
+push a payload over the bit-level transport, the failure is now reported as what it is, with a pointer
+to `piprobe program`, instead of a bare socket error.
+
 Install the globally callable `piprobe` command through `pipx`; it exposes a launcher on `PATH` and manages PiProbe's isolated runtime environment. Users do not need to activate or maintain a project virtual environment. The package requires Python 3.11+ without pinning one exact minor version, and never replaces the macOS/OS-provided Python.
 
 From a clone of this repository, install and run discovery with:
