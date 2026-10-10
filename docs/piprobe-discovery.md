@@ -61,8 +61,16 @@ than one form never relaxes trust: each is still checked against `known_hosts`, 
 cannot pass any of them and the retry only changes which name is looked up. That keeps a healthy probe
 reachable when a record lists an unreachable address first, and it lets a host that trusts the probe
 under one name work without entries for every address. A record whose identities are all unusable is
-rejected rather than dialled. IPv6-only links remain untested: the client browses both families and
-the unit tests cover address handling, but no IPv6-only network was available (Bead `ebaz4205-3pb.13`).
+rejected rather than dialled.
+
+A probe reachable only over IPv6 was tested end to end on 2026-10-10 (Bead `ebaz4205-3pb.13`): a peer
+entry holding only the probe's IPv6 literal, and an advertisement whose only address was AAAA, both ran
+the read-only TAP scan, and the client reported the IPv6 literal as the identity it used. Endpoints
+render IPv6 in brackets (`[fd7a:…]:22`), and the table clips long literals while `--json` carries them
+in full. Still untested is a native IPv6-only segment, where the probe itself has no IPv4 address and
+mDNS runs over IPv6 multicast: this bench's probes carry IPv6 only on an overlay, so the browse itself
+happened over IPv4 multicast. Host prerequisite: an IPv6 literal needs its own `known_hosts` entry —
+the bare address for port 22, `[address]:port` otherwise.
 
 The discovery state is separate from control authorization. Report candidates as `discovered`, `reachable`, `untrusted`, `trusted`, and, where applicable, `busy` or `ready`. A stale advertisement alone must never imply that the probe is reachable or safe to use.
 
