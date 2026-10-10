@@ -46,6 +46,13 @@ tokens, and `transport=ssh`. Never publish credentials, host keys, serial
 numbers, or debug data in discovery records. The stable random node ID is stored
 with user-only permissions.
 
+The instance name is a label for humans: `PiProbe-<label>`, defaulting to the
+board's host name, which the SRV record already publishes, and overridable with
+`piprobe announce --label`. It is never an identity, because any device on the
+link can claim any name; the TXT node ID plus the verified SSH host key are what
+a host trusts. Operators can also give a node a purely local name with
+`aliases.json` (see `piprobe/README.md`), which publishes nothing at all.
+
 Treat every advertisement and address as an untrusted candidate. The host confirms the node identity with the control service before accepting detailed hardware metadata or connecting to a capability endpoint. Detailed model, endpoint, and readiness data come from that service, not from unchecked TXT fields. A repeated stable ID with a different key or conflicting endpoint is an identity conflict, not an automatic replacement.
 
 The discovery state is separate from control authorization. Report candidates as `discovered`, `reachable`, `untrusted`, `trusted`, and, where applicable, `busy` or `ready`. A stale advertisement alone must never imply that the probe is reachable or safe to use.

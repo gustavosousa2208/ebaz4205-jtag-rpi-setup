@@ -23,6 +23,7 @@ DEFAULT_QUIET_PERIOD = 0.6
 SERVICE_INFO_TIMEOUT_MS = 500
 SAFE_TOKEN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$")
 SAFE_CAPABILITY = re.compile(r"^[a-z][a-z0-9._-]{0,31}$")
+ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 SUPPORTED_TRANSPORTS = {"tcp", "ssh"}
 
 
@@ -87,7 +88,7 @@ def candidate_from_service(info: object, service_name: str, source: str = "mdns"
 def host_names(row: dict[str, object]) -> set[str]:
     """Host names a record can be recognized by, normalized without resolving anything."""
     names: set[str] = set()
-    for value in (row.get("host"), *(row.get("aliases") or [])):
+    for value in (row.get("host"), *(row.get("known_names") or [])):
         text = str(value or "").strip().rstrip(".").casefold()
         if not text:
             continue
@@ -134,10 +135,10 @@ def merge_candidates(candidates: list[dict[str, object]]) -> list[dict[str, obje
             paths = [str(preferred.get("source")), *(str(path) for path in (preferred.get("sources") or [])),
                      str(other.get("source")), *(str(path) for path in (other.get("sources") or []))]
             preferred["sources"] = list(dict.fromkeys(paths))
-            names = [*(preferred.get("aliases") or []), str(other.get("name", "")), *(other.get("aliases") or [])]
-            aliases = [str(name) for name in dict.fromkeys(names) if name]
-            if aliases:
-                preferred["aliases"] = aliases
+            names = [*(preferred.get("known_names") or []), str(other.get("name", "")), *(other.get("known_names") or [])]
+            known = [str(name) for name in dict.fromkeys(names) if name]
+            if known:
+                preferred["known_names"] = known
             if other.get("expected_identity"):
                 preferred["expected_identity"] = other["expected_identity"]
             merged[index] = preferred
@@ -318,6 +319,55 @@ def paint(text: str, code: str, enabled: bool) -> str:
     return f"\x1b[{code}m{text}\x1b[0m" if enabled else text
 
 
+def default_aliases_path() -> Path:
+    return default_peers_path().parent / "aliases.json"
+
+
+def load_aliases(path: Path) -> dict[str, str]:
+    """Local, unpublished names for probe nodes, keyed by node id or advertised name.
+
+    An alias is a convenience for the operator on this machine: nothing is advertised, and a name
+    never grants trust. The file is optional, but when it exists an invalid entry is an error rather
+    than a warning, because a silent typo would hide the name the operator expects to see.
+    """
+    if not path.exists():
+        return {}
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read aliases file {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError("aliases file must be a JSON object mapping a node id or name to an alias")
+    aliases: dict[str, str] = {}
+    for key, value in document.items():
+        alias = safe_text(value, 64).strip()
+        if not ALIAS_PATTERN.fullmatch(alias):
+            raise ValueError(f"alias {alias!r} for {key!r} must be 1-32 characters of letters, digits, "
+                             "dot, dash or underscore, starting with a letter or digit")
+        aliases[str(key).strip().casefold()] = alias
+    return aliases
+
+
+def apply_aliases(candidates: list[dict[str, object]], aliases: dict[str, str]) -> list[dict[str, object]]:
+    """Give each candidate the operator's local name for it, if one is configured."""
+    if not aliases:
+        return candidates
+    named: list[dict[str, object]] = []
+    for row in candidates:
+        alias = aliases.get(str(row.get("node_id") or "").strip().casefold()) \
+            or aliases.get(str(row.get("name") or "").strip().casefold())
+        if alias:
+            row = dict(row)
+            row["alias"] = alias
+        named.append(row)
+    return named
+
+
+def display_name(row: dict[str, object]) -> str:
+    """The name to show: the operator's alias when there is one, otherwise the advertised name."""
+    return str(row.get("alias") or row.get("name") or "-")
+
+
 def endpoint_for(row: dict[str, object]) -> str:
     addresses = row.get("addresses") or []
     host = ""
@@ -334,7 +384,7 @@ def endpoint_for(row: dict[str, object]) -> str:
     return f"{host}:{port}" if port else host or "-"
 
 
-TABLE_WIDTHS = (16, 10, 20, 5, 6, 10)
+TABLE_WIDTHS = (20, 10, 17, 4, 8, 10)
 SOURCE_LABELS = {"mdns": "mDNS", "peer-config": "peer"}
 
 
@@ -359,7 +409,7 @@ def print_table(candidates: list[dict[str, object]], *, color: bool | None = Non
         source = ",".join(SOURCE_LABELS.get(str(path), safe_text(path, 24)) for path in paths)
         caps = ",".join(safe_text(cap, 16).upper() for cap in row.get("capabilities", [])) or "-"
         values = (
-            safe_text(row.get("name", "-"), 256),
+            display_name(row),
             state,
             endpoint_for(row),
             safe_text(row.get("transport", "tcp"), 12).upper(),
@@ -376,6 +426,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Discover PiProbe candidates without connecting to their control endpoints.")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help=f"maximum mDNS browse duration in seconds (default: {DEFAULT_TIMEOUT:g}; max: {MAX_TIMEOUT:g}); after a result, discovery ends after {DEFAULT_QUIET_PERIOD:g}s without changes")
     parser.add_argument("--peers-file", type=Path, default=default_peers_path(), help="optional JSON file of explicitly pinned peers")
+    parser.add_argument("--aliases-file", type=Path, default=default_aliases_path(),
+                        help="optional JSON file mapping a node id or name to the local name to display")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     args = parser.parse_args(argv)
     if not 0.5 <= args.timeout <= MAX_TIMEOUT:
@@ -387,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         candidates = load_peer_candidates(args.peers_file.expanduser())
+        aliases = load_aliases(args.aliases_file.expanduser())
     except ValueError as exc:
         print(f"piprobe-discover: {exc}", file=sys.stderr)
         return 2
@@ -399,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         print(f"piprobe-discover: warning: {exc}; showing configured peers only", file=sys.stderr)
 
-    candidates = merge_candidates(candidates)
+    candidates = apply_aliases(merge_candidates(candidates), aliases)
     if args.json:
         print(json.dumps(candidates, indent=2, ensure_ascii=False))
     else:

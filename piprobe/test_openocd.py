@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -224,6 +225,26 @@ class NodeResolutionTests(unittest.TestCase):
         self.assertIn("PiProbe-5ef16103", message)
         self.assertIn("PiProbe-dc4817ec", message)
         self.assertNotIn("gusta-bpi", message)      # merged into the record it duplicates
+
+    def test_a_local_alias_names_the_node(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "aliases.json"
+            path.write_text(json.dumps({"5ef16103-0cba-4df1-8af4-ddf366da7387": "banana-pi"}), encoding="utf-8")
+            row = {"name": "PiProbe-5ef16103", "host": "gusta-bpi.local.", "port": 22, "transport": "ssh",
+                   "capabilities": ["jtag"], "addresses": ["192.168.0.101"], "source": "mdns",
+                   "node_id": "5ef16103-0cba-4df1-8af4-ddf366da7387"}
+            with patch.object(openocd.discover, "default_aliases_path", return_value=path):
+                self.assertEqual(self.resolve([row], "banana-pi").name, "banana-pi")
+                self.assertEqual(self.resolve([row], "PiProbe-5ef16103").name, "banana-pi")
+                self.assertEqual(self.resolve([row], "banana-pi").host, "192.168.0.101")
+
+    def test_an_invalid_aliases_file_is_a_usage_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "aliases.json"
+            path.write_text(json.dumps({"PiProbe-5ef16103": "not a name"}), encoding="utf-8")
+            with patch.object(openocd.discover, "default_aliases_path", return_value=path):
+                with self.assertRaises(openocd.UsageError):
+                    self.resolve([self.row("PiProbe-5ef16103", "192.168.0.101")])
 
     def test_unknown_request_lists_what_was_found(self) -> None:
         with self.assertRaises(openocd.UsageError) as caught:

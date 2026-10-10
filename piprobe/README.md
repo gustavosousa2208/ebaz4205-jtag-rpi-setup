@@ -3,8 +3,18 @@
 The host-side discovery command supports macOS, Windows, and Linux with Python 3.11 or newer. It listens for `_piprobe._tcp` DNS-SD advertisements on IPv4 and IPv6 mDNS. It does not connect to the advertised endpoint, authenticate, or grant JTAG access. All network advertisements are shown as unverified candidates. This first client supports mDNS and an explicit pinned-peer file; managed unicast DNS-SD records are a documented extension for networks that provide them.
 On a Banana Pi or Raspberry Pi, `piprobe announce` publishes only an opaque
 stable node ID, API major version, coarse capability, and SSH port. It does not
-start the XVC server or enable JTAG. Use `piprobe/piprobe-announce.service` as
-an unprivileged systemd user unit:
+start the XVC server or enable JTAG. The advertised name is a label for humans —
+`PiProbe-<label>`, defaulting to the board's host name, which the SRV record
+already publishes — and `--label` replaces it with whatever you call that probe:
+
+```sh
+piprobe announce --label banana-pi          # advertises PiProbe-banana-pi
+```
+
+The label is lowercased, reduced to dashes and capped at 24 characters; the
+opaque node ID in the TXT record remains the identity, so a spoofed name never
+grants trust. Set it once in the unit instead of passing it by hand. Use
+`piprobe/piprobe-announce.service` as an unprivileged systemd user unit:
 
 ```sh
 pipx install .
@@ -106,3 +116,28 @@ macOS/Linux and `%APPDATA%\PiProbe\peers.json` on Windows.
 ```
 
 The peer entry is only a candidate; this command does not validate its identity or connect to it. For an SSH peer, use the fingerprint of the Pi's host key already verified through OpenSSH. `transport` may be `tcp` (the default) or `ssh`. Never put a private key or access token in this file. The announcement does not authenticate hosts or authorize JTAG. For the current security policy and remaining deployment checks, see Bead `ebaz4205-3pb.5`.
+
+## Local names
+
+Whatever a probe advertises, you can call it what you like on this machine:
+`aliases.json` next to the peer file maps a node ID or advertised name to the
+name to display and to accept in `--node`.
+
+```json
+{
+  "5ef16103-0cba-4df1-8af4-ddf366da7387": "banana-pi-jtag",
+  "PiProbe-dc4817ec": "rpi4-lab"
+}
+```
+
+```sh
+piprobe discover                    # PROBE column shows banana-pi-jtag and rpi4-lab
+piprobe openocd --node rpi4-lab     # either name works
+```
+
+Aliases are local: nothing is published, they never grant trust, and `--json`
+still reports the advertised name and node ID. A typo is reported as an error
+rather than silently ignored, because a name that quietly does not apply is
+worse than a rejected file. Matches are case-insensitive; aliases must be 1-32
+characters of letters, digits, dot, dash or underscore. Use `--aliases-file` to
+read a different file.

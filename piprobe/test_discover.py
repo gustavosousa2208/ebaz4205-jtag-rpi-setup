@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import sys
@@ -51,7 +52,7 @@ class MergeTests(unittest.TestCase):
         node = merged[0]
         self.assertEqual(node["name"], "PiProbe-5ef16103")            # the richer record leads
         self.assertEqual(node["sources"], ["mdns", "peer-config"])    # both paths stay visible
-        self.assertIn("gusta-bpi", node["aliases"])
+        self.assertIn("gusta-bpi", node["known_names"])
         self.assertEqual(node["expected_identity"], self.peer()["expected_identity"])
         self.assertEqual(node["addresses"], ["192.168.0.101"])
 
@@ -82,6 +83,139 @@ class MergeTests(unittest.TestCase):
         merged = discover.merge_candidates([self.peer()])
         self.assertEqual(len(merged), 1)
         self.assertNotIn("sources", merged[0])
+
+
+class AnnounceNameTests(unittest.TestCase):
+    """The advertised instance name is a label for humans; the node id stays the identity."""
+
+    def test_label_is_lowercased_and_reduced_to_dashes(self) -> None:
+        self.assertEqual(announce.sanitize_label("Banana Pi JTAG #1"), "banana-pi-jtag-1")
+        self.assertEqual(announce.sanitize_label("  --weird--  "), "weird")
+        self.assertEqual(announce.sanitize_label(None), "")
+        self.assertEqual(announce.sanitize_label("ünïcode"), "n-code")
+
+    def test_label_is_bounded_and_never_left_dangling(self) -> None:
+        cleaned = announce.sanitize_label("a" * 40)
+        self.assertEqual(len(cleaned), announce.LABEL_MAX)
+        self.assertFalse(announce.sanitize_label("a" * 23 + "-" * 5).endswith("-"))
+
+    def test_default_label_is_the_host_name_the_srv_record_already_publishes(self) -> None:
+        name = announce.service_name("5ef16103-0cba-4df1-8af4-ddf366da7387", None, "gusta-bpi")
+        self.assertEqual(name, f"PiProbe-gusta-bpi.{discover.SERVICE_TYPE}")
+
+    def test_explicit_label_wins(self) -> None:
+        name = announce.service_name("5ef16103-0cba-4df1-8af4-ddf366da7387", "Banana Pi!", "gusta-bpi")
+        self.assertEqual(name, f"PiProbe-banana-pi.{discover.SERVICE_TYPE}")
+
+    def test_unusable_names_fall_back_to_the_opaque_node_id(self) -> None:
+        name = announce.service_name("5ef16103-0cba-4df1-8af4-ddf366da7387", None, "...")
+        self.assertEqual(name, f"PiProbe-5ef16103.{discover.SERVICE_TYPE}")
+
+    def test_announce_rejects_a_label_with_nothing_usable_in_it(self) -> None:
+        self.assertEqual(announce.main(["--label=---"]), 2)
+
+    def zeroconf_fakes(self, behaviour: str = "ok") -> tuple[dict[str, object], dict[str, object]]:
+        """Minimal stand-ins for the zeroconf API announce uses, plus a record of what it registered."""
+        fake_ifaddr = types.ModuleType("ifaddr")
+        fake_ifaddr.get_adapters = lambda: [SimpleNamespace(ips=[SimpleNamespace(ip="192.168.0.101")])]
+        calls: dict[str, object] = {}
+
+        class Info:
+            def __init__(self, type_, name, addresses=None, port=None, properties=None, server=None):
+                self.type, self.name = type_, name
+                self.addresses, self.port, self.properties, self.server = addresses, port, properties, server
+
+        class Zeroconf:
+            def __init__(self, ip_version=None):
+                self.ip_version = ip_version
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def register_service(self, info, **kwargs):
+                calls["name"], calls["kwargs"] = info.name, kwargs
+                if behaviour == "conflict":
+                    raise module.Error("NonUniqueNameException: the name is in use")
+                raise SystemExit(0)      # stop publish before its serve loop
+
+            def unregister_service(self, info):
+                return None
+
+        module = types.ModuleType("zeroconf")
+        module.IPVersion = SimpleNamespace(All=1)
+        module.ServiceInfo = Info
+        module.Zeroconf = Zeroconf
+        module.Error = type("Error", (Exception,), {})
+        module.NonUniqueNameException = type("NonUniqueNameException", (module.Error,), {})
+        return {"ifaddr": fake_ifaddr, "zeroconf": module}, calls
+
+    def test_publish_asks_for_conflict_resolution_and_uses_the_effective_name(self) -> None:
+        fakes, calls = self.zeroconf_fakes()
+        with patch.dict(sys.modules, fakes):
+            with self.assertRaises(SystemExit):
+                announce.publish("5ef16103-0cba-4df1-8af4-ddf366da7387", 22, "Banana Pi")
+        self.assertEqual(calls["name"], f"PiProbe-banana-pi.{discover.SERVICE_TYPE}")
+        self.assertTrue(calls["kwargs"].get("allow_name_change"),
+                        "a name conflict must rename, not stop the probe from being discoverable")
+
+    def test_publish_reports_a_name_conflict_cleanly(self) -> None:
+        fakes, calls = self.zeroconf_fakes(behaviour="conflict")
+        with patch.dict(sys.modules, fakes):
+            self.assertEqual(announce.publish("5ef16103-0cba-4df1-8af4-ddf366da7387", 22, "banana-pi"), 1)
+        self.assertEqual(calls["name"], f"PiProbe-banana-pi.{discover.SERVICE_TYPE}")
+
+
+class AliasTests(unittest.TestCase):
+    """Aliases are the operator's local names: unpublished and never a trust decision."""
+
+    def write(self, directory: str, document: object) -> Path:
+        path = Path(directory) / "aliases.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        return path
+
+    def row(self, name: str, node_id: str = "", address: str = "192.168.0.101") -> dict[str, object]:
+        return {"name": name, "node_id": node_id, "host": f"{name}.local.", "port": 22, "addresses": [address],
+                "capabilities": ["jtag"], "transport": "ssh", "source": "mdns"}
+
+    def test_missing_file_means_no_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.assertEqual(discover.load_aliases(Path(temp_dir) / "aliases.json"), {})
+
+    def test_alias_applies_by_node_id_and_by_advertised_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = self.write(temp_dir, {"5ef16103-0cba-4df1-8af4-ddf366da7387": "banana-pi",
+                                         "PiProbe-dc4817ec": "rpi4-lab"})
+            aliases = discover.load_aliases(path)
+            rows = discover.apply_aliases(
+                [self.row("PiProbe-5ef16103", "5ef16103-0cba-4df1-8af4-ddf366da7387"),
+                 self.row("PiProbe-dc4817ec", "dc4817ec-2570-47f4-b6b7-471b66bbee6b", "192.168.0.69"),
+                 self.row("PiProbe-other", "ffffffff-0000-0000-0000-000000000000", "192.168.0.70")],
+                aliases)
+            self.assertEqual([discover.display_name(row) for row in rows], ["banana-pi", "rpi4-lab", "PiProbe-other"])
+            self.assertEqual(rows[0]["name"], "PiProbe-5ef16103")       # the wire name is untouched
+
+    def test_the_table_shows_the_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            aliases = discover.load_aliases(self.write(temp_dir, {"PiProbe-5ef16103": "banana-pi"}))
+            rows = discover.apply_aliases([self.row("PiProbe-5ef16103", "5ef16103-0000")], aliases)
+            output = io.StringIO()
+            with patch.object(sys, "stdout", output):
+                discover.print_table(rows, color=False)
+            self.assertIn("banana-pi", output.getvalue())
+
+    def test_an_invalid_alias_is_an_error_not_a_silent_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for bad in ("has space", "sla/sh", "", "x" * 40):
+                with self.assertRaises(ValueError):
+                    discover.load_aliases(self.write(temp_dir, {"PiProbe-5ef16103": bad}))
+
+    def test_a_non_object_document_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with self.assertRaises(ValueError):
+                discover.load_aliases(self.write(temp_dir, ["banana-pi"]))
 
 
 class DiscoveryRecordTests(unittest.TestCase):

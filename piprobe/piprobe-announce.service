@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Add --label <name> to advertise PiProbe-<name> instead of the host name.
 ExecStart=%h/.local/bin/piprobe announce
 Restart=on-failure
 RestartSec=5

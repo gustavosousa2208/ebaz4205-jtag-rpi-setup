@@ -202,12 +202,17 @@ def resolve_node(requested: str | None, ssh_user: str | None, timeout: float) ->
     except RuntimeError as exc:
         mdns_error = str(exc)
     candidates += discover.load_peer_candidates(discover.default_peers_path())
-    candidates = discover.merge_candidates(candidates)
+    try:
+        aliases = discover.load_aliases(discover.default_aliases_path())
+    except ValueError as exc:
+        raise UsageError(str(exc)) from exc
+    candidates = discover.apply_aliases(discover.merge_candidates(candidates), aliases)
 
     def identifiers(row: dict[str, object]) -> set[str]:
         """Every name a record can be asked for, so one node answers to all of its paths."""
-        names = {str(row.get("name", "")).casefold(), str(row.get("node_id", "")).casefold()}
-        names |= {str(alias).casefold() for alias in (row.get("aliases") or [])}
+        names = {str(row.get("name", "")).casefold(), str(row.get("node_id", "")).casefold(),
+                 str(row.get("alias", "")).casefold()}
+        names |= {str(known).casefold() for known in (row.get("known_names") or [])}
         names |= discover.host_names(row)
         names |= {str(address).casefold() for address in (row.get("addresses") or [])}
         return {name for name in names if name}
@@ -223,7 +228,7 @@ def resolve_node(requested: str | None, ssh_user: str | None, timeout: float) ->
         if not host:
             raise UsageError(f"candidate {row.get('name')!r} advertises no usable address")
         paths = row.get("sources") or [row.get("source") or "unknown"]
-        return Node(name=str(row.get("name") or host), host=host, port=port,
+        return Node(name=discover.display_name(row), host=host, port=port,
                     source=",".join(str(path) for path in paths), node_id=str(row.get("node_id") or ""))
 
     if requested:
